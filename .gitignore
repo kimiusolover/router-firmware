@@ -1,0 +1,11 @@
+/build/
+/cache/
+/downloads/
+/dist/*
+!/dist/.gitkeep
+*.tmp
+*.swp
+.DS_Store
+
+__pycache__/
+*.py[cod]

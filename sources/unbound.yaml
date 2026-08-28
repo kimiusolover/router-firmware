@@ -1,0 +1,7 @@
+name: unbound
+status: pending-verification
+upstream: https://nlnetlabs.nl/projects/unbound/about/
+revision: unset
+sha256: unset
+archive: unset
+license: BSD-3-Clause

@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+echo 'systemd: cross-build recipe blocked until the target libc and toolchain are locked' >&2
+exit 1

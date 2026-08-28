@@ -1,0 +1,39 @@
+name: Release firmware
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      # The fixture contains no timestamps other than this value. A fixed epoch
+      # makes the released binary independently reproducible.
+      SOURCE_DATE_EPOCH: "0"
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Verify discovery target metadata
+        run: make verify DEVICE=ax23v-v1
+      - name: Build deterministic release fixture
+        run: |
+          make sample-image DEVICE=ax23v-v1
+          make attest DEVICE=ax23v-v1
+      - name: Publish release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" \
+              dist/ax23v-v1.bin dist/ax23v-v1.manifest.json \
+              dist/SHA256SUMS dist/provenance.json --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              dist/ax23v-v1.bin dist/ax23v-v1.manifest.json \
+              dist/SHA256SUMS dist/provenance.json \
+              --title "$GITHUB_REF_NAME" \
+              --notes "AX23V v1 reproducible, unflashable integration fixture. Do not flash this asset."
+          fi

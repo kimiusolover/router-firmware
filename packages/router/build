@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+echo 'router: build recipe blocked until the base rootfs and service policy are locked' >&2
+exit 1

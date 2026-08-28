@@ -1,0 +1,7 @@
+name: jool
+status: pending-verification
+upstream: https://www.jool.mx/en/download.html
+revision: unset
+sha256: unset
+archive: unset
+license: GPL-2.0-only

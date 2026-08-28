@@ -1,0 +1,9 @@
+# One source identifier per line. It must have a corresponding sources/*.yaml.
+# This is the product composition, not a host package-manager manifest.
+linux
+systemd
+hostapd
+nftables
+unbound
+kea
+jool

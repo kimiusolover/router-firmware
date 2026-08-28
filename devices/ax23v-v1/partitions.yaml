@@ -1,0 +1,14 @@
+# Do not populate offsets or sizes from guesswork. Confirm against a stock-image
+# analysis and a serial/bootloader partition listing before enabling `image`.
+status: unverified
+evidence: required-before-image-assembly
+# There are deliberately no offsets, sizes, erase blocks, or writable slots.
+# They must be taken from stock-image analysis and a bootloader partition listing,
+# then reviewed against the preserved regions below.
+preserve:
+  - u-boot
+  - u-boot-env
+  - factory
+  - art
+  - tp-link-reserved
+writable_partitions: []

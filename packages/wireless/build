@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+echo 'wireless: build recipe blocked until Wi-Fi chipset support and calibration preservation are verified' >&2
+exit 1

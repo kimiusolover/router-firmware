@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+echo 'networking: build recipe blocked until source locks and target ABI are verified' >&2
+exit 1

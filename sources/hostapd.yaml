@@ -1,0 +1,7 @@
+name: hostapd
+status: pending-verification
+upstream: https://w1.fi/hostapd/
+revision: unset
+sha256: unset
+archive: unset
+license: BSD-3-Clause
