@@ -41,6 +41,7 @@ class PipelineTests(unittest.TestCase):
         manifest = ROOT / "dist" / "ax23v-v1.manifest.json"
         checksums = ROOT / "dist" / "SHA256SUMS"
         provenance = ROOT / "dist" / "provenance.json"
+        sbom = ROOT / "dist" / "ax23v-v1.sbom.cdx.json"
         try:
             first = self.run_pipeline("sample-image", "--device", "ax23v-v1")
             self.assertEqual(first.returncode, 0, first.stderr)
@@ -55,7 +56,13 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(manifest_data["schema"], 2)
             self.assertFalse(manifest_data["flashable"])
             self.assertEqual(manifest_data["artifacts"][0]["format"], "router-firmware-unflashable-fixture")
+            self.assertEqual(manifest_data["artifacts"][1]["format"], "cyclonedx-1.5-json")
+            sbom_data = json.loads(sbom.read_text(encoding="utf-8"))
+            self.assertEqual(sbom_data["bomFormat"], "CycloneDX")
+            self.assertEqual(sbom_data["specVersion"], "1.5")
+            self.assertEqual(sbom_data["metadata"]["properties"][1]["value"], "false")
             self.assertIn("ax23v-v1.bin", checksums.read_text(encoding="utf-8"))
+            self.assertIn("ax23v-v1.sbom.cdx.json", checksums.read_text(encoding="utf-8"))
             statement = json.loads(provenance.read_text(encoding="utf-8"))
             self.assertEqual(statement["subject"][0]["name"], "ax23v-v1.bin")
             self.assertEqual(statement["subject"][0]["digest"]["sha256"], manifest_data["artifacts"][0]["sha256"])
@@ -65,3 +72,4 @@ class PipelineTests(unittest.TestCase):
             manifest.unlink(missing_ok=True)
             checksums.unlink(missing_ok=True)
             provenance.unlink(missing_ok=True)
+            sbom.unlink(missing_ok=True)

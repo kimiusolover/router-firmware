@@ -1,0 +1,80 @@
+# AX23V v1 physical-capability record.  Verified fields below intentionally
+# remain unset: this one read-only capture is an observation, not a final
+# device inventory.  Raw probe output is private and ignored by Git; only its
+# reviewed metadata and digests are retained here.
+schema: router-firmware.device-storage-capabilities/v1
+specification: ../../docs/physical-storage-capability-specification.yaml
+device: ax23v-v1
+status: discovery
+
+storage_capabilities:
+  media:
+    id: primary-storage
+    type: unset
+    total_bytes: unset
+    verified: false
+    evidence: []
+  physical_regions: []
+  ram:
+    total: unset
+    safely_allocatable: unset
+    oom_reserve: unset
+    verified: false
+    evidence: []
+  constraints:
+    alignment: unset
+    bootloader_visible_regions: []
+    bad_block_policy: unset
+    verified: false
+    evidence: []
+
+observations:
+  - id: linux-mtd-registration-2026-08-29
+    status: observed
+    captured_at: "2026-08-29T15:26:08Z"
+    source: private-evidence/ax23v-storage-probe/manifest.json
+    evidence:
+      - { type: runtime_command, artifact: proc-mtd.txt, sha256: "0b26039b5c7dec34edc5688fc40cb5bce33e6f0cb26ac135418db6043b5ead6e" }
+      - { type: runtime_command, artifact: mtd-regions.tsv, sha256: "49a1ca66cad4a0637b6311653395f411ee402faafce7e6beb7d4924889176517" }
+      - { type: kernel_log, artifact: kernel-storage.txt, sha256: "42728669741919c966549949c61cf96c7de6ccae34ccfe9ded5066771063ce8c" }
+    media:
+      type: spi_nor
+      total_bytes: 16777216
+      total_bytes_basis: sum-of-observed-top-level-mtd-regions
+    regions:
+      # Size and registration names are observed only.  Offset, owner,
+      # writability, and bootloader visibility remain unset.
+      - { id: mtd0, name: u-boot, size_bytes: 262144, erase_size_bytes: 65536 }
+      - { id: mtd1, name: firmware, size_bytes: 16121856, erase_size_bytes: 65536 }
+      - { id: mtd2, name: kernel, size_bytes: 3312735, erase_size_bytes: 65536, contained_by: mtd1 }
+      - { id: mtd3, name: rootfs, size_bytes: 12809121, erase_size_bytes: 65536, contained_by: mtd1 }
+      - { id: mtd4, name: rootfs_data, size_bytes: 5832704, erase_size_bytes: 65536, contained_by: mtd3 }
+      - { id: mtd5, name: config, size_bytes: 65536, erase_size_bytes: 65536, preservation_candidate: true }
+      - { id: mtd6, name: tplink, size_bytes: 262144, erase_size_bytes: 65536, preservation_candidate: true }
+      - { id: mtd7, name: radio, size_bytes: 65536, erase_size_bytes: 65536, preservation_candidate: true }
+  - id: linux-memory-summary-2026-08-29
+    status: observed
+    captured_at: "2026-08-29T15:26:08Z"
+    source: private-evidence/ax23v-storage-probe/manifest.json
+    evidence:
+      - { type: runtime_command, artifact: ram-summary.txt, sha256: "ce25fce97fcd5e113e96960894f0c16f6e57e1cd372f0a97b0d368a93db68bf0" }
+    linux_memtotal_bytes: 121618432
+    # Linux MemTotal is neither physical RAM nor a safe tmpfs allocation.
+    capacity_policy_input: forbidden
+
+layout_state:
+  proposed: false
+  final: false
+  physical_layout_generation: blocked
+  blocked_by:
+    - no-device-captured-storage-evidence
+    - no-verified-media-capacity
+    - no-verified-region-boundaries
+    - no-verified-ram-budget
+
+collection_requirements:
+  - collect-and-redact-proc-mtd
+  - capture-serial-bootloader-partition-listing
+  - record-erase-size-and-writability-per-region
+  - record-memory-capacity-and-oom-safe-budget
+  - attach-integrity-protected-evidence-references

@@ -1,0 +1,45 @@
+# Evidence and verification model for hardware/storage facts. A capability
+# value is usable by the layout planner only after this state machine completes.
+schema: router-firmware.evidence-verification-specification/v1
+fact_states: [unset, observed, verified, usable]
+transitions:
+  unset_to_observed:
+    requires: [captured_evidence]
+    does_not_authorize: [capacity_policy_input, layout_finalization, write_permission, ownership_classification]
+  observed_to_verified:
+    requires: [required_independent_sources, consistency_pass, integrity_checked]
+  verified_to_usable:
+    requires: [policy_compatibility_pass, no_security_or_privacy_violation]
+
+evidence:
+  required_fields: [type, source, captured_at, sha256]
+  accepted_types: [runtime_command, kernel_log, serial_boot_log, stock_image_analysis, dts_analysis, vendor_primary_document, hardware_measurement]
+  privacy_rules:
+    - Never commit raw MTD contents, calibration blobs, MAC addresses, serial numbers, cryptographic secrets, or bootloader environment values.
+    - Evidence may retain redacted command output and hashes of private originals.
+    - A partition name alone does not establish ownership, writability, or data class.
+
+verification_profiles:
+  media_total_size:
+    independent_sources: 2
+    acceptable_combinations: [[runtime_command, kernel_log], [runtime_command, serial_boot_log], [stock_image_analysis, hardware_measurement]]
+  mtd_region_geometry:
+    independent_sources: 2
+    acceptable_combinations: [[runtime_command, serial_boot_log], [runtime_command, dts_analysis], [runtime_command, stock_image_analysis]]
+  bootloader_visible_region:
+    independent_sources: 2
+    required_type: serial_boot_log
+    companion_types: [runtime_command, stock_image_analysis, vendor_primary_document]
+  ram_budget:
+    independent_sources: 2
+    acceptable_combinations: [[runtime_command, kernel_log], [runtime_command, hardware_measurement]]
+  device_data_ownership:
+    independent_sources: 3
+    required_types: [runtime_command, dts_analysis]
+    companion_types: [serial_boot_log, stock_image_analysis, vendor_primary_document]
+    additional_rule: No raw device data is needed or permitted in the repository.
+
+verification_result:
+  required_fields: [fact_id, value, status, evidence, independent_sources, consistency, policy_compatibility]
+  statuses: [observed, verified, rejected]
+  usable_rule: Only status verified with consistency pass and policy_compatibility pass may update storage-capabilities.yaml.

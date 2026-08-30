@@ -1,0 +1,52 @@
+# Contract for the storage layout planner. The planner must emit a machine-
+# readable explanation when evidence is insufficient; it must never turn an
+# incomplete proposal into a flashable layout.
+schema: router-firmware.layout-planner-specification/v1
+inputs:
+  required:
+    - storage-specification.yaml
+    - device-storage-policy
+    - capacity-allocation-specification.yaml
+    - device-capacity-policy
+    - device-storage-capabilities
+  input_rules:
+    - Policy files describe requirements and may not supply physical facts.
+    - Capability files describe evidence-backed facts and may not relax policy requirements.
+    - All inputs must identify the same device and schema generation.
+
+constraint_evaluation:
+  reject_conditions:
+    - device_data_overlap
+    - boot_region_shrink_or_overlap
+    - recovery_region_reuse
+    - config_reserve_insufficient
+    - log_or_cache_exceeds_ram_budget
+    - oom_reserve_insufficient
+    - system_fit_requires_protected_region_reuse
+  final_blockers:
+    - physical_media_unverified
+    - mtd_boundaries_unverified
+    - bootloader_visible_regions_unverified
+    - ram_budget_unverified
+    - capacity_allocations_unset
+  rule: An unknown input may yield a proposed layout but can never yield a final layout.
+
+outputs:
+  proposed_layout:
+    required_fields: [schema, device, status, regions, validation]
+    status: proposed
+    flashable: false
+    region_fields: [class, placement, offset, size, resource]
+  final_layout:
+    required_fields: [schema, device, status, regions, validation]
+    status: final
+    flashable: eligible-only-after-image-format-signing-and-release-validation
+  rejection_report:
+    required_fields: [accepted, reasons]
+    reason_fields: [code, message, affected_classes]
+
+state_rules:
+  - proposed-layout may contain unset placement, offset, or size.
+  - final-layout must contain no unset placement, offset, size, capacity, or required evidence field.
+  - final-layout requires every final_blocker to be absent and every reject_condition to be false.
+  - planner output is not itself authorization to write a device.

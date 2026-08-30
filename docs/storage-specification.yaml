@@ -1,0 +1,94 @@
+# Machine-independent logical storage specification.
+#
+# This file deliberately describes responsibilities rather than partitions,
+# directories, subvolumes, or offsets. Device policies select an implementation
+# only after their hardware inventory and failure analysis are evidenced.
+schema: router-firmware.storage-specification/v1
+design_flow:
+  - hardware_inventory
+  - data_classification
+  - lifecycle_matrix
+  - failure_security_analysis
+  - update_recovery_model
+  - logical_storage_model
+  - physical_layout
+
+reset_models:
+  reboot: { description: Does not reset a storage class. }
+  factory_reset: { description: Restores administrator and runtime data without erasing hardware-owned data. }
+  full_recovery: { description: Restores the OS while retaining device-specific hardware data. }
+
+classes:
+  BOOT:
+    ownership: boot-update-subsystem
+    mutable: restricted
+    persistence: persistent
+    lifecycle: { reboot: retain, os_update: verified-atomic-update, factory_reset: retain, full_recovery: retain }
+    failure: { impact: critical, containment: independent-from-system-filesystem, detection: bootloader-verification, recovery: known-good-fallback }
+    security: { integrity: critical, confidentiality: medium, availability: critical, writer: boot-update-subsystem }
+    placement: { preferred: [dedicated_partition, dedicated_mtd], forbidden: [tmpfs] }
+  DEVICE_DATA:
+    ownership: hardware-vendor-provisioning
+    mutable: false
+    persistence: persistent
+    lifecycle: { reboot: retain, os_update: retain, factory_reset: retain, full_recovery: retain }
+    failure: { impact: critical, containment: outside-os-managed-storage, detection: checksum-and-format-validation, recovery: original-provisioning-data-only }
+    security: { integrity: critical, confidentiality: critical, availability: critical, writer: provisioning-only }
+    placement: { preferred: [dedicated_mtd, nvmem, dedicated_partition], forbidden: [subvolume, directory, tmpfs] }
+  SYSTEM:
+    ownership: package-update-subsystem
+    mutable: restricted
+    persistence: persistent
+    lifecycle: { reboot: retain, os_update: replace-transactionally, factory_reset: restore-initial, full_recovery: restore }
+    failure: { impact: high, containment: separate-from-config-state, detection: signature-hash-filesystem-validation, recovery: regenerate-or-rollback }
+    security: { integrity: high, confidentiality: low, availability: high, writer: package-update-subsystem }
+    placement: { preferred: [subvolume, dedicated_partition, immutable_image], readonly_by_default: true }
+  CONFIG:
+    ownership: authenticated-management-path
+    mutable: true
+    persistence: persistent
+    lifecycle: { reboot: retain, os_update: retain, factory_reset: initialize, full_recovery: initialize }
+    failure: { impact: high, containment: separate-from-system-lifecycle, detection: parse-schema-semantic-policy-validation, recovery: previous-known-good-or-default }
+    security: { integrity: high, confidentiality: high, availability: high, writer: authenticated-management-path }
+    placement: { preferred: [subvolume, dedicated_partition, persistent_directory], commit: validate-before-write-atomic-preserve-previous }
+  STATE:
+    ownership: designated-service
+    mutable: true
+    persistence: persistent
+    lifecycle: { reboot: retain, os_update: retain, factory_reset: initialize, full_recovery: initialize-or-regenerate }
+    failure: { impact: medium, containment: must-not-damage-device-data, detection: service-format-checksum-validation, recovery: regenerate-or-partial-restore }
+    security: { integrity: medium, confidentiality: medium, availability: medium, writer: designated-service }
+    placement: { preferred: [subvolume, persistent_directory] }
+  LOG:
+    ownership: logging-subsystem
+    mutable: true
+    persistence: optional
+    lifecycle: { reboot: implementation-defined, os_update: discardable, factory_reset: discardable, full_recovery: discardable }
+    failure: { impact: low, containment: must-not-exhaust-system-or-config-storage, detection: rotation-quota-sequence-check, recovery: loss-tolerated }
+    security: { integrity: medium, confidentiality: medium, availability: low, writer: logging-subsystem }
+    placement: { preferred: [tmpfs, quota-limited-subvolume], quota_required: true, rotation_required: true }
+  CACHE:
+    ownership: owning-service
+    mutable: true
+    persistence: optional
+    lifecycle: { reboot: discardable, os_update: discardable, factory_reset: discardable, full_recovery: discardable }
+    failure: { impact: low, containment: must-not-be-a-boot-dependency, detection: optional, recovery: delete-and-rebuild }
+    security: { integrity: low, confidentiality: medium, availability: low, writer: owning-service }
+    placement: { preferred: [tmpfs, volatile_directory, disposable_persistent_area], must_be_disposable: true }
+  RECOVERY:
+    ownership: trusted-recovery-update-subsystem
+    mutable: restricted
+    persistence: persistent
+    lifecycle: { reboot: retain, os_update: policy-controlled, factory_reset: retain, full_recovery: retain }
+    failure: { impact: critical, containment: independent-from-system-when-recovery-root-required, detection: signature-hash-version-policy-validation, recovery: trusted-external-source }
+    security: { integrity: critical, confidentiality: medium, availability: critical, writer: trusted-recovery-update-subsystem }
+    placement: { preferred: [dedicated_partition, readonly_subvolume], fallback: signed_external_source, readonly_by_default: true }
+
+placement_decision_order:
+  - hardware_owned: dedicated_mtd_or_nvmem
+  - needed_before_os_boot: dedicated_partition_or_mtd
+  - requires_system_failure_domain_separation: dedicated_partition_or_volume
+  - rollback_unit: subvolume
+  - persistent_data: persistent_directory_or_subvolume
+  - disposable_data: tmpfs
+  - not_worth_internal_capacity: signed_external_source

@@ -3,6 +3,7 @@
 /downloads/
 /dist/*
 !/dist/.gitkeep
+/private-evidence/
 /objsource
 *.tmp
 *.swp

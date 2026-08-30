@@ -1,0 +1,85 @@
+#!/usr/bin/env sh
+# Read-only storage capability probe for a router target. It never opens an MTD
+# device and intentionally excludes bootloader environment and device data.
+set -eu
+umask 077
+
+usage() {
+  printf '%s\n' 'usage: storage-probe [--output DIRECTORY]'
+}
+
+output=/tmp/storage-probe
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --output) output=${2:?missing output directory}; shift 2 ;;
+    --help|-h) usage; exit 0 ;;
+    *) usage >&2; exit 2 ;;
+  esac
+done
+
+command -v sha256sum >/dev/null 2>&1 || {
+  printf '%s\n' 'storage-probe: sha256sum is required' >&2
+  exit 1
+}
+[ -r /proc/mtd ] || {
+  printf '%s\n' 'storage-probe: /proc/mtd is unavailable' >&2
+  exit 1
+}
+[ -r /proc/meminfo ] || {
+  printf '%s\n' 'storage-probe: /proc/meminfo is unavailable' >&2
+  exit 1
+}
+
+mkdir -p "$output"
+chmod 700 "$output"
+cp /proc/mtd "$output/proc-mtd.txt"
+
+{
+  printf 'id\tname\ttype\toffset_bytes\tsize_bytes\terasesize_bytes\n'
+  for region in /sys/class/mtd/mtd*; do
+    [ -d "$region" ] || continue
+    id=$(basename "$region")
+    # Linux exposes read-only aliases such as mtd0ro beside mtd0.  They do not
+    # expose a complete region attribute set and are not separate media facts.
+    case "$id" in
+      mtd|mtd*[!0-9]*) continue ;;
+    esac
+    name=$(cat "$region/name")
+    type=$(cat "$region/type")
+    if [ -r "$region/offset" ]; then
+      offset=$(cat "$region/offset")
+    else
+      offset=unset
+    fi
+    size=$(cat "$region/size")
+    erase=$(cat "$region/erasesize")
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$id" "$name" "$type" "$offset" "$size" "$erase"
+  done
+} > "$output/mtd-regions.tsv"
+
+awk '/^(MemTotal|MemAvailable|Buffers|Cached|SwapTotal|SwapFree):/ { print }' /proc/meminfo > "$output/ram-summary.txt"
+
+# Restrict output to storage-registration messages, then redact MAC-shaped
+# tokens in case a platform-specific driver emitted one on a matching line.
+if command -v dmesg >/dev/null 2>&1; then
+  dmesg 2>/dev/null | grep -Ei 'mtd|spi[- ]nor|partition' | \
+    sed -E 's/([[:xdigit:]]{2}:){5}[[:xdigit:]]{2}/[redacted-mac]/g' \
+    > "$output/kernel-storage.txt" || :
+else
+  : > "$output/kernel-storage.txt"
+fi
+
+captured_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+{
+  printf '{\n  "schema": "router-firmware.storage-probe/v1",\n'
+  printf '  "captured_at": "%s",\n  "files": [\n' "$captured_at"
+  first=true
+  for file in proc-mtd.txt mtd-regions.tsv ram-summary.txt kernel-storage.txt; do
+    hash=$(sha256sum "$output/$file" | awk '{print $1}')
+    if [ "$first" = true ]; then first=false; else printf ',\n'; fi
+    printf '    {"name":"%s","sha256":"%s"}' "$file" "$hash"
+  done
+  printf '\n  ]\n}\n'
+} > "$output/manifest.json"
+chmod 600 "$output"/*
+printf '%s\n' "$output/manifest.json"

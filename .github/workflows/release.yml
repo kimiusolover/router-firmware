@@ -6,6 +6,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write
 
 jobs:
   release:
@@ -38,6 +39,19 @@ jobs:
         run: |
           go run ./routerctl/cmd/routerctl verify-release \
             dist/ax23v-v1.manifest.json dist/SHA256SUMS dist/provenance.json
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@3454372f43399081ed03b604cb2d021dabca52bb # v3.8.2
+      - name: Keylessly sign release artifact, manifest, and SBOM
+        run: |
+          for subject in \
+            dist/ax23v-v1.bin \
+            dist/ax23v-v1.manifest.json \
+            dist/ax23v-v1.sbom.cdx.json; do
+            cosign sign-blob --yes \
+              --bundle "$subject.bundle" \
+              --output-signature "$subject.sig" \
+              "$subject"
+          done
       - name: Publish release assets
         env:
           GH_TOKEN: ${{ github.token }}
@@ -45,11 +59,17 @@ jobs:
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" \
               dist/ax23v-v1.bin dist/ax23v-v1.manifest.json \
-              dist/SHA256SUMS dist/provenance.json --clobber
+              dist/ax23v-v1.sbom.cdx.json dist/SHA256SUMS dist/provenance.json \
+              dist/ax23v-v1.bin.sig dist/ax23v-v1.bin.bundle \
+              dist/ax23v-v1.manifest.json.sig dist/ax23v-v1.manifest.json.bundle \
+              dist/ax23v-v1.sbom.cdx.json.sig dist/ax23v-v1.sbom.cdx.json.bundle --clobber
           else
             gh release create "$GITHUB_REF_NAME" \
               dist/ax23v-v1.bin dist/ax23v-v1.manifest.json \
-              dist/SHA256SUMS dist/provenance.json \
+              dist/ax23v-v1.sbom.cdx.json dist/SHA256SUMS dist/provenance.json \
+              dist/ax23v-v1.bin.sig dist/ax23v-v1.bin.bundle \
+              dist/ax23v-v1.manifest.json.sig dist/ax23v-v1.manifest.json.bundle \
+              dist/ax23v-v1.sbom.cdx.json.sig dist/ax23v-v1.sbom.cdx.json.bundle \
               --title "$GITHUB_REF_NAME" \
               --notes "AX23V v1 reproducible, unflashable integration fixture. Do not flash this asset."
           fi

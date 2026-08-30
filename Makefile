@@ -1,13 +1,13 @@
 SHELL := /usr/bin/env bash
 DEVICE ?= ax23v-v1
 
-.PHONY: help fetch build rootfs image sample-image attest verify test clean
+.PHONY: help fetch build rootfs image sample-image attest verify plan-storage test clean
 
 help:
-	@printf '%s\n' 'Targets: fetch build rootfs image sample-image attest verify test clean' \
+	@printf '%s\n' 'Targets: fetch build rootfs image sample-image attest verify plan-storage test clean' \
 	  'Set DEVICE=<target> (default: ax23v-v1).'
 
-fetch build rootfs image attest verify:
+fetch build rootfs image attest verify plan-storage:
 	@./scripts/$@ --device "$(DEVICE)"
 
 sample-image:

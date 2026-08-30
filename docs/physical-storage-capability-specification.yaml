@@ -1,0 +1,54 @@
+# Machine-independent record of observed storage capabilities.
+# This is an evidence layer, not a request or a proposed physical layout.
+schema: router-firmware.physical-storage-capability-specification/v1
+depends_on:
+  - storage-specification.yaml
+  - capacity-allocation-specification.yaml
+
+value_model:
+  unit: bytes
+  unset_value: unset
+  evidence_required_for_verified_value: true
+  rule: A value without evidence remains unset; inherited, reported, or guessed data must not become a verified capability.
+
+storage_capabilities:
+  media:
+    fields: [id, type, total_bytes, verified, evidence]
+    supported_types: [spi_nor, spi_nand, nand, emmc, sd, nvme, unknown]
+  physical_regions:
+    fields: [id, offset, size, erase_size, writable, owner, bootloader_visible, verified, evidence]
+    owner_values: [bootloader, vendor, device_data_candidate, os, recovery, unknown]
+    overlap_policy: Regions may not overlap unless a verified containment relationship is explicitly represented.
+  ram:
+    fields: [total, safely_allocatable, oom_reserve, verified, evidence]
+  constraints:
+    fields: [alignment, bootloader_visible_regions, bad_block_policy, verified, evidence]
+
+observations:
+  required_fields: [id, status, captured_at, source, evidence]
+  status: observed
+  rule: Observed values may record a reviewed capture but must not populate verified capability fields or relax planner blockers.
+  region_rule: An observed region name or size does not establish offset, ownership, writability, bootloader visibility, or data class.
+  ram_rule: Linux MemTotal is an operating-system observation, not physical RAM capacity or safely allocatable tmpfs capacity.
+
+evidence_record:
+  required_fields: [kind, source, captured_at, integrity]
+  kinds: [serial_boot_log, proc_mtd, sysfs, stock_image_analysis, hardware_measurement, bootloader_dump, vendor_primary_document]
+  integrity: A redacted artifact digest, immutable capture identifier, or documented chain of custody; never store raw calibration or secret data in the repository.
+
+verification_rules:
+  - A physical region is usable by a planner only when offset, size, erase_size, writable, owner, and evidence are verified.
+  - A region marked vendor or device_data_candidate is excluded from OS-managed capacity until ownership is verified otherwise.
+  - A capability record with unset media total, RAM safely_allocatable, or region boundaries may not produce a final layout.
+  - bootloader-visible regions may not be moved, resized, or overlapped without bootloader evidence and an explicit approved update model.
+  - writable is not inferred from a partition name or from successful read access.
+  - capability evidence records describe observations; policy, capacity, and layout files must not overwrite them.
+
+layout_states:
+  proposed:
+    description: Satisfies policy and capacity constraints using available capability data, but has not completed all physical and bootloader validation.
+    flashable: false
+  final:
+    description: Uses verified boundaries and capabilities, passes overlap/alignment/bootloader/capacity validation, and has an approved update and recovery model.
+    required: [verified_media, verified_ram, verified_regions, no_unset_allocations, validated_recovery]
+    flashable: eligible-only-after-separate-image-format-and-signing-validation

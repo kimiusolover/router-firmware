@@ -40,12 +40,15 @@ flashed. `make image` remains the only route to a real image and stays blocked
 until device and partition verification are completed.
 
 Pushing a `v*` tag runs the same command in GitHub Actions and publishes this
-fixture with `ax23v-v1.manifest.json`, `SHA256SUMS`, and `provenance.json` as
-release assets. The manifest declares `flashable: false`; consumers must reject
+fixture with `ax23v-v1.manifest.json`, a CycloneDX 1.5 SBOM, `SHA256SUMS`, and
+`provenance.json` as release assets. The fixture, manifest, and SBOM are
+keylessly signed with Sigstore and their bundles are released beside them. The
+manifest declares `flashable: false`; consumers must reject
 it for installation and may use it only for backend integration testing.
 The workflow runs `routerctl verify-release` before publication. Its
-provenance is an unsigned in-toto Statement for metadata agreement only;
-signature verification and attestation authenticity are not implemented yet.
+provenance is an unsigned in-toto Statement for metadata agreement only; the
+released manifest and SBOM must additionally be verified against their Sigstore
+bundles before relying on the metadata.
 
 `make test` exercises the safety gates. `make fetch`, `make build`, and later
 stages are intentionally blocked for AX23V until every source record is locked

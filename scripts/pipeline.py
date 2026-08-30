@@ -18,6 +18,7 @@ import subprocess
 import sys
 import tarfile
 import urllib.request
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -224,6 +225,105 @@ def sample_image(device: str) -> None:
                     archive.addfile(info)
 
 
+def plan_storage(device: str) -> None:
+    """Emit a fail-closed storage-layout proposal and finalization blockers.
+
+    This intentionally does not solve offsets or sizes from device guesses.
+    A proposal is useful as an auditable planning artifact; it is never an
+    image authorization and remains non-flashable until the capability record
+    and capacity allocations are fully verified.
+    """
+    verify(device)
+    directory, definition_path, _ = device_paths(device)
+    paths = {
+        "storage_specification": ROOT / "docs" / "storage-specification.yaml",
+        "storage_policy": directory / "storage-policy.yaml",
+        "capacity_specification": ROOT / "docs" / "capacity-allocation-specification.yaml",
+        "capacity_policy": directory / "capacity-policy.yaml",
+        "storage_capabilities": directory / "storage-capabilities.yaml",
+        "planner_specification": ROOT / "docs" / "layout-planner-specification.yaml",
+    }
+    for label, path in paths.items():
+        if not path.is_file():
+            fail(f"missing {label}: {path}")
+
+    capabilities = paths["storage_capabilities"].read_text(encoding="utf-8")
+    capacity = paths["capacity_policy"].read_text(encoding="utf-8")
+    definition = scalar_yaml(definition_path)
+    blockers: list[dict[str, object]] = []
+
+    def block(code: str, message: str, affected: list[str]) -> None:
+        blockers.append({"code": code, "message": message, "affected_classes": affected})
+
+    if "total_bytes: unset" in capabilities:
+        block("physical_media_unverified", "physical media capacity is unset", ["SYSTEM", "CONFIG", "STATE", "RECOVERY"])
+    if "physical_regions: []" in capabilities:
+        block("mtd_boundaries_unverified", "no evidence-backed physical-region boundaries are available", ["BOOT", "DEVICE_DATA", "SYSTEM", "RECOVERY"])
+    if "bootloader_visible_regions: []" in capabilities:
+        block("bootloader_visible_regions_unverified", "bootloader-visible regions are not verified", ["BOOT", "RECOVERY"])
+    if "safely_allocatable: unset" in capabilities or "oom_reserve: unset" in capabilities:
+        block("ram_budget_unverified", "RAM budget or OOM reserve is unset", ["LOG", "CACHE"])
+    if any(f"{field}: unset" in capacity for field in ("min", "target", "max", "reserve")):
+        block("capacity_allocations_unset", "per-class capacity allocation contains unset values", ["SYSTEM", "CONFIG", "STATE", "LOG", "CACHE", "RECOVERY"])
+    if definition.get("status") != "supported":
+        block("device_not_supported", "device is not supported for final storage layout", ["BOOT", "DEVICE_DATA", "SYSTEM", "CONFIG", "STATE", "LOG", "CACHE", "RECOVERY"])
+
+    classes = ("BOOT", "DEVICE_DATA", "SYSTEM", "CONFIG", "STATE", "LOG", "CACHE", "RECOVERY")
+    plan = {
+        "schema": "router-firmware.storage-layout-plan/v1",
+        "device": device,
+        "status": "proposed",
+        "regions": [{"class": name, "placement": "unset", "offset": "unset", "size": "unset", "resource": "unset"} for name in classes],
+        "validation": {
+            "flashable": False,
+            "final_eligible": not blockers,
+            "blockers": [entry["code"] for entry in blockers],
+        },
+        "rejection_report": {"accepted": not blockers, "reasons": blockers},
+        "inputs": {name: str(path.relative_to(ROOT)) for name, path in paths.items()},
+    }
+    output = build_dir(device) / "storage-layout.plan.json"
+    output.write_text(json.dumps(plan, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    print(output.relative_to(ROOT))
+
+
+def write_sbom(device: str, fixture: bool, entries: list[dict[str, object]], created: str) -> Path:
+    """Emit a deterministic CycloneDX inventory for the release artifact set."""
+    components = [{
+        "type": "file",
+        "name": entry["name"],
+        "hashes": [{"alg": "SHA-256", "content": entry["sha256"]}],
+        "properties": [{"name": "router-firmware:format", "value": entry["format"]}],
+    } for entry in entries]
+    for _, source in source_locks(not fixture):
+        components.append({
+            "type": "library",
+            "name": source["name"],
+            "version": source["revision"],
+            "externalReferences": [{"type": "distribution", "url": source["archive"]}],
+            "hashes": [{"alg": "SHA-256", "content": source["sha256"]}],
+            "licenses": [{"license": {"name": source["license"]}}],
+        })
+    sbom = {
+        "bomFormat": "CycloneDX",
+        "specVersion": "1.5",
+        "serialNumber": f"urn:uuid:{uuid.uuid5(uuid.NAMESPACE_URL, f'https://router-firmware.invalid/sbom/{device}')}",
+        "version": 1,
+        "metadata": {
+            "timestamp": created,
+            "component": {"type": "firmware", "name": f"router-firmware-{device}"},
+            "properties": [
+                {"name": "router-firmware:release-kind", "value": "unflashable-fixture" if fixture else "firmware-image"},
+                {"name": "router-firmware:flashable", "value": str(not fixture).lower()},
+            ],
+        },
+        "components": components,
+    }
+    path = ROOT / "dist" / f"{device}.sbom.cdx.json"
+    path.write_text(json.dumps(sbom, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return path
+
+
 def attest(device: str) -> None:
     artifacts = sorted(p for p in (ROOT / "dist").glob(f"{device}*.bin") if p.is_file())
     if not artifacts:
@@ -236,7 +336,7 @@ def attest(device: str) -> None:
     image_format = "router-firmware-unflashable-fixture" if fixture else definition.get("format", "")
     if image_format not in ARTIFACT_FORMATS:
         fail(f"unsupported artifact format: {image_format or 'unset'}")
-    entries = [{
+    entries: list[dict[str, object]] = [{
         "name": p.name,
         "sha256": hashlib.file_digest(p.open("rb"), "sha256").hexdigest(),
         "size": p.stat().st_size,
@@ -246,6 +346,13 @@ def attest(device: str) -> None:
         source_locks(strict=True)
     stamp = os.environ.get("SOURCE_DATE_EPOCH")
     created = datetime.fromtimestamp(int(stamp), timezone.utc).isoformat().replace("+00:00", "Z") if stamp else datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    sbom = write_sbom(device, fixture, entries, created)
+    entries.append({
+        "name": sbom.name,
+        "sha256": hashlib.file_digest(sbom.open("rb"), "sha256").hexdigest(),
+        "size": sbom.stat().st_size,
+        "format": "cyclonedx-1.5-json",
+    })
     manifest = {
         "schema": 2,
         "device": device,
@@ -257,9 +364,9 @@ def attest(device: str) -> None:
     }
     (ROOT / "dist" / f"{device}.manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     (ROOT / "dist" / "SHA256SUMS").write_text("".join(f"{entry['sha256']}  {entry['name']}\n" for entry in entries), encoding="utf-8")
-    # A plain in-toto Statement lets routerctl verify the same artifact names
-    # and digests as the manifest and SHA256SUMS. This is integrity metadata,
-    # not a signed attestation; signature verification is a later concern.
+    # GitHub Actions signs the release artifact plus manifest and SBOM using
+    # keyless Sigstore in the release workflow. This file remains the unsigned
+    # payload so routerctl can verify metadata agreement without network access.
     provenance = {
         "_type": "https://in-toto.io/Statement/v1",
         "subject": [{"name": entry["name"], "digest": {"sha256": entry["sha256"]}} for entry in entries],
@@ -273,7 +380,7 @@ def attest(device: str) -> None:
                 "repository": "kimiusolover/routerctl",
                 "commit": os.environ.get("ROUTERCTL_VERIFIER_COMMIT"),
             },
-            "signatureVerification": "not-implemented",
+            "signatureVerification": "required-for-release",
         },
     }
     (ROOT / "dist" / "provenance.json").write_text(json.dumps(provenance, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -281,11 +388,11 @@ def attest(device: str) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=("verify", "fetch", "build", "rootfs", "image", "sample-image", "attest"))
+    parser.add_argument("command", choices=("verify", "fetch", "build", "rootfs", "image", "sample-image", "attest", "plan-storage"))
     parser.add_argument("--device", required=True)
     parser.add_argument("--strict", action="store_true")
     args = parser.parse_args()
-    {"verify": lambda: verify(args.device, args.strict), "fetch": lambda: fetch(args.device), "build": lambda: build(args.device), "rootfs": lambda: rootfs(args.device), "image": lambda: image(args.device), "sample-image": lambda: sample_image(args.device), "attest": lambda: attest(args.device)}[args.command]()
+    {"verify": lambda: verify(args.device, args.strict), "fetch": lambda: fetch(args.device), "build": lambda: build(args.device), "rootfs": lambda: rootfs(args.device), "image": lambda: image(args.device), "sample-image": lambda: sample_image(args.device), "attest": lambda: attest(args.device), "plan-storage": lambda: plan_storage(args.device)}[args.command]()
 
 
 if __name__ == "__main__":

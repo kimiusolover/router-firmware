@@ -1,0 +1,63 @@
+# Machine-independent capacity policy. Quantities are integer bytes only once a
+# device capability record is verified; "unset" must block layout generation.
+schema: router-firmware.capacity-allocation-specification/v1
+depends_on: storage-specification.yaml
+
+value_model:
+  unit: bytes
+  fields: [min, target, max, reserve]
+  unset_value: unset
+  rule: An unset capacity value is valid during discovery but invalid for physical-layout generation.
+  resources:
+    persistent: Non-volatile OS-managed capacity; excludes preserved hardware-owned regions.
+    ram: Volatile memory capacity, including tmpfs-backed classes.
+
+class_requirements:
+  BOOT: { required: true, capacity_source: hardware-owned, reclaimable: false, pressure_behavior: reject-update }
+  DEVICE_DATA: { required: true, capacity_source: hardware-owned, reclaimable: false, pressure_behavior: reject-layout }
+  SYSTEM: { required: true, capacity_source: persistent, reclaimable: false, pressure_behavior: reject-update-or-rollback }
+  CONFIG: { required: true, capacity_source: persistent, reclaimable: false, pressure_behavior: reject-commit-preserve-known-good }
+  STATE: { required: true, capacity_source: persistent, reclaimable: bounded, pressure_behavior: compact-or-regenerate-designated-state }
+  LOG: { required: false, capacity_source: ram-or-persistent, reclaimable: true, pressure_behavior: rotate-then-drop-oldest }
+  CACHE: { required: false, capacity_source: ram-or-persistent, reclaimable: true, pressure_behavior: evict-then-disable-cache }
+  RECOVERY: { required: true, capacity_source: protected-persistent-or-external, reclaimable: false, pressure_behavior: reject-layout }
+
+allocation_order:
+  persistent:
+    - protect-BOOT-and-DEVICE_DATA-outside-os-allocation
+    - reserve-RECOVERY-root-or-trusted-local-metadata
+    - allocate-SYSTEM-minimum
+    - allocate-CONFIG-minimum-and-known-good-reserve
+    - allocate-STATE-minimum
+    - allocate-LOG-and-CACHE-only-from-explicitly-bounded-remainder
+  ram:
+    - reserve-non-tmpfs-operating-memory
+    - allocate-LOG-with-hard-quota
+    - allocate-CACHE-with-hard-quota
+    - retain-oom-safety-margin
+
+pressure_priority:
+  # Lower number is reclaimed first. Classes not listed are never reclaimed to
+  # make a proposed layout fit.
+  CACHE: 1
+  LOG: 2
+  STATE: 3
+
+validator_rules:
+  - physical-layout generation requires verified device capabilities and no unset min-target-max-reserve value.
+  - sum of allocations plus reserves must not exceed the capacity of each resource.
+  - BOOT, DEVICE_DATA, and RECOVERY must not be reduced, reused, or included in OS-managed free space to satisfy another class.
+  - SYSTEM, CONFIG, STATE, LOG, and CACHE must not overlap preserved hardware-owned regions.
+  - CONFIG must reserve space for the previous-known-good revision before accepting a commit.
+  - LOG and CACHE on persistent storage require independent maximums and must be the first reclaimable classes under pressure.
+  - tmpfs LOG and CACHE count against the RAM budget and require hard maximums plus an OOM safety reserve.
+  - a plan without viable RECOVERY must be rejected even when its SYSTEM allocation fits.
+  - external recovery artifacts do not count as trusted until verification against local trusted keys and policy is specified.
+
+physical_layout_inputs:
+  - verified_flash_or_storage_capacity
+  - verified_ram_capacity
+  - verified_preserved_region_boundaries
+  - per_class_min_target_max_reserve
+  - update_working_space_requirement
+  - recovery_root_requirement
