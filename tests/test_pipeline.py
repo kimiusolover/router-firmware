@@ -67,6 +67,9 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(statement["subject"][0]["name"], "ax23v-v1.bin")
             self.assertEqual(statement["subject"][0]["digest"]["sha256"], manifest_data["artifacts"][0]["sha256"])
             self.assertEqual(statement["predicate"]["verifier"]["repository"], "kimiusolover/routerctl")
+            self.assertEqual(statement["predicate"]["generator"], "router-firmware pipeline attest")
+            self.assertTrue(statement["predicate"]["human_review"]["required"])
+            self.assertIsNone(statement["predicate"]["human_review"]["reviewed_by"])
         finally:
             artifact.unlink(missing_ok=True)
             manifest.unlink(missing_ok=True)

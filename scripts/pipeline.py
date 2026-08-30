@@ -381,6 +381,15 @@ def attest(device: str) -> None:
                 "commit": os.environ.get("ROUTERCTL_VERIFIER_COMMIT"),
             },
             "signatureVerification": "required-for-release",
+            # Optional contributor provenance. These fields preserve the
+            # existing in-toto statement shape and are set when known.
+            "generator": os.environ.get("ROUTEROS_GENERATOR", "router-firmware pipeline attest"),
+            "automation_actor": os.environ.get("ROUTEROS_AUTOMATION_ACTOR"),
+            "ai_assistance": os.environ.get("ROUTEROS_AI_ASSISTANCE"),
+            "human_review": {
+                "required": os.environ.get("ROUTEROS_HUMAN_REVIEW_REQUIRED", "true").lower() == "true",
+                "reviewed_by": os.environ.get("ROUTEROS_REVIEWED_BY"),
+            },
         },
     }
     (ROOT / "dist" / "provenance.json").write_text(json.dumps(provenance, indent=2, sort_keys=True) + "\n", encoding="utf-8")

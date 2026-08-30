@@ -49,6 +49,9 @@ The workflow runs `routerctl verify-release` before publication. Its
 provenance is an unsigned in-toto Statement for metadata agreement only; the
 released manifest and SBOM must additionally be verified against their Sigstore
 bundles before relying on the metadata.
+Its backward-compatible predicate metadata also records the generator,
+automation actor, AI assistance, and whether human review was required and who
+performed it when those facts are supplied by the release environment.
 
 `make test` exercises the safety gates. `make fetch`, `make build`, and later
 stages are intentionally blocked for AX23V until every source record is locked
