@@ -240,7 +240,26 @@ def attest(device: str) -> None:
     }
     (ROOT / "dist" / f"{device}.manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     (ROOT / "dist" / "SHA256SUMS").write_text("".join(f"{entry['sha256']}  {entry['name']}\n" for entry in entries), encoding="utf-8")
-    (ROOT / "dist" / "provenance.json").write_text(json.dumps({"device": device, "sources": [v for _, v in source_locks(not fixture)], "source_date_epoch": stamp or None, "release_kind": "unflashable-fixture" if fixture else "firmware-image"}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    # A plain in-toto Statement lets routerctl verify the same artifact names
+    # and digests as the manifest and SHA256SUMS. This is integrity metadata,
+    # not a signed attestation; signature verification is a later concern.
+    provenance = {
+        "_type": "https://in-toto.io/Statement/v1",
+        "subject": [{"name": entry["name"], "digest": {"sha256": entry["sha256"]}} for entry in entries],
+        "predicateType": "https://routerctl.dev/firmware-provenance/v1",
+        "predicate": {
+            "device": device,
+            "releaseKind": "unflashable-fixture" if fixture else "firmware-image",
+            "sourceDateEpoch": stamp or None,
+            "sources": [v for _, v in source_locks(not fixture)],
+            "verifier": {
+                "repository": "kimiusolover/routerctl",
+                "commit": os.environ.get("ROUTERCTL_VERIFIER_COMMIT"),
+            },
+            "signatureVerification": "not-implemented",
+        },
+    }
+    (ROOT / "dist" / "provenance.json").write_text(json.dumps(provenance, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def main() -> None:

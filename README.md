@@ -43,6 +43,9 @@ Pushing a `v*` tag runs the same command in GitHub Actions and publishes this
 fixture with `ax23v-v1.manifest.json`, `SHA256SUMS`, and `provenance.json` as
 release assets. The manifest declares `flashable: false`; consumers must reject
 it for installation and may use it only for backend integration testing.
+The workflow runs `routerctl verify-release` before publication. Its
+provenance is an unsigned in-toto Statement for metadata agreement only;
+signature verification and attestation authenticity are not implemented yet.
 
 `make test` exercises the safety gates. `make fetch`, `make build`, and later
 stages are intentionally blocked for AX23V until every source record is locked

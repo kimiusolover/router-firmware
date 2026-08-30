@@ -14,6 +14,7 @@ jobs:
       # The fixture contains no timestamps other than this value. A fixed epoch
       # makes the released binary independently reproducible.
       SOURCE_DATE_EPOCH: "0"
+      ROUTERCTL_VERIFIER_COMMIT: "2288cd8a559bca2b10e13251570cccd22383f9a2"
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Verify discovery target metadata
@@ -22,6 +23,21 @@ jobs:
         run: |
           make sample-image DEVICE=ax23v-v1
           make attest DEVICE=ax23v-v1
+      - name: Check out routerctl release verifier
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: kimiusolover/routerctl
+          ref: 2288cd8a559bca2b10e13251570cccd22383f9a2
+          path: routerctl
+      - name: Set up the pinned verifier Go toolchain
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: routerctl/go.mod
+          cache-dependency-path: routerctl/go.sum
+      - name: Verify release metadata agreement
+        run: |
+          go run ./routerctl/cmd/routerctl verify-release \
+            dist/ax23v-v1.manifest.json dist/SHA256SUMS dist/provenance.json
       - name: Publish release assets
         env:
           GH_TOKEN: ${{ github.token }}

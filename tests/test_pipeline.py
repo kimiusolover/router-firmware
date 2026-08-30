@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import json
 import unittest
 from pathlib import Path
 
@@ -50,9 +51,13 @@ class PipelineTests(unittest.TestCase):
             self.assertTrue(initial.startswith(b"ROUTER-FIRMWARE-UNFLASHABLE" + bytes([0])))
             attestation = self.run_pipeline("attest", "--device", "ax23v-v1")
             self.assertEqual(attestation.returncode, 0, attestation.stderr)
-            self.assertIn('"flashable": false', manifest.read_text(encoding="utf-8"))
+            manifest_data = json.loads(manifest.read_text(encoding="utf-8"))
+            self.assertFalse(manifest_data["flashable"])
             self.assertIn("ax23v-v1.bin", checksums.read_text(encoding="utf-8"))
-            self.assertTrue(provenance.is_file())
+            statement = json.loads(provenance.read_text(encoding="utf-8"))
+            self.assertEqual(statement["subject"][0]["name"], "ax23v-v1.bin")
+            self.assertEqual(statement["subject"][0]["digest"]["sha256"], manifest_data["artifacts"][0]["sha256"])
+            self.assertEqual(statement["predicate"]["verifier"]["repository"], "kimiusolover/routerctl")
         finally:
             artifact.unlink(missing_ok=True)
             manifest.unlink(missing_ok=True)
