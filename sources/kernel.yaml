@@ -1,0 +1,8 @@
+name: linux
+status: pending-verification
+# Populate revision and sha256 together from kernel.org before status: locked.
+upstream: https://www.kernel.org/
+revision: unset
+sha256: unset
+archive: unset
+license: GPL-2.0-only

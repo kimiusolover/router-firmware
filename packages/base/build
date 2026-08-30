@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Base package policy is carried by rootfs/ and overlays/.  A concrete package
+# archive is emitted only after all sources and toolchain inputs are locked.
+set -euo pipefail
+echo 'base: no independently built source package'

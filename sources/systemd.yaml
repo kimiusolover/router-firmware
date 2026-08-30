@@ -1,0 +1,7 @@
+name: systemd
+status: pending-verification
+upstream: https://github.com/systemd/systemd
+revision: unset
+sha256: unset
+archive: unset
+license: LGPL-2.1-or-later

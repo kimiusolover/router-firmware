@@ -1,0 +1,7 @@
+name: nftables
+status: pending-verification
+upstream: https://www.netfilter.org/projects/nftables/
+revision: unset
+sha256: unset
+archive: unset
+license: GPL-2.0-only

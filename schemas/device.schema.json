@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "router-firmware device definition",
+  "type": "object",
+  "required": ["id", "vendor", "product", "hardware_version", "status", "preserve", "image"],
+  "properties": {
+    "id": {"type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"},
+    "status": {"enum": ["discovery", "verified", "supported"]},
+    "preserve": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+    "image": {"type": "object", "required": ["format", "signing", "rootfs"]}
+  }
+}

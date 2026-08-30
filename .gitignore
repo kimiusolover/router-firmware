@@ -1,0 +1,12 @@
+/build/
+/cache/
+/downloads/
+/dist/*
+!/dist/.gitkeep
+/objsource
+*.tmp
+*.swp
+.DS_Store
+
+__pycache__/
+*.py[cod]

@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "router-firmware source lock",
+  "type": "object",
+  "required": ["name", "status", "upstream", "revision", "sha256", "archive", "license"],
+  "properties": {
+    "name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._+-]*$"},
+    "status": {"enum": ["pending-verification", "locked"]},
+    "upstream": {"type": "string", "format": "uri"},
+    "revision": {"type": "string"},
+    "sha256": {"type": "string"},
+    "archive": {"type": "string", "format": "uri"},
+    "license": {"type": "string"}
+  }
+}

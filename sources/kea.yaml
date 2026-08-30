@@ -1,0 +1,7 @@
+name: kea
+status: pending-verification
+upstream: https://www.isc.org/kea/
+revision: unset
+sha256: unset
+archive: unset
+license: MPL-2.0

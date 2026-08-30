@@ -1,0 +1,23 @@
+schema: ../../schemas/device.schema.json
+id: ax23v-v1
+vendor: TP-Link
+product: Archer AX23V
+hardware_version: "1.0"
+status: discovery
+architecture: null
+soc: null
+kernel_config: kernel.config
+packages: packages.txt
+regulatory: regulatory.yaml
+partitions: partitions.yaml
+preserve:
+  - u-boot
+  - u-boot-env
+  - factory
+  - art
+  - tp-link-reserved
+image:
+  format: null
+  signing: null
+  rootfs: btrfs
+  layout: ../../image/layouts/ax23v-v1.sh
