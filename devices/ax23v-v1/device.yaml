@@ -4,8 +4,14 @@ vendor: TP-Link
 product: Archer AX23V
 hardware_version: "1.0"
 status: discovery
-architecture: null
-soc: null
+# These are compatibility facts, not permission to produce a flash image.
+# AX23V-specific wiring and factory acceptance details live in hardware-overlay.yaml.
+architecture: mipsel
+soc: MT7621DAT
+base_device: tplink-archer-ax23-v1
+openwrt_target: ramips/mt7621
+hardware_overlay: hardware-overlay.yaml
+evidence: evidence.md
 kernel_config: kernel.config
 packages: packages.txt
 regulatory: regulatory.yaml

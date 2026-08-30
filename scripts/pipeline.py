@@ -22,6 +22,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+ARTIFACT_FORMATS = {
+    "tplink-safeloader",
+    "openwrt-sysupgrade",
+    "router-firmware-unflashable-fixture",
+}
 
 
 def scalar_yaml(path: Path) -> dict[str, str]:
@@ -198,7 +203,7 @@ def sample_image(device: str) -> None:
     output = ROOT / "dist" / f"{device}.bin"
     header = {
         "device": device,
-        "format": "router-firmware-unflashable-fixture-v1",
+        "format": "router-firmware-unflashable-fixture",
         "reason": "AX23V partition map, boot format, and signing are unverified",
         "source_date_epoch": epoch,
     }
@@ -223,14 +228,26 @@ def attest(device: str) -> None:
     artifacts = sorted(p for p in (ROOT / "dist").glob(f"{device}*.bin") if p.is_file())
     if not artifacts:
         fail(f"no firmware artifacts for {device}")
-    entries = [{"name": p.name, "sha256": hashlib.file_digest(p.open("rb"), "sha256").hexdigest(), "size": p.stat().st_size} for p in artifacts]
+    definition = scalar_yaml(device_paths(device)[1])
+    partitions = scalar_yaml(device_paths(device)[2])
     fixture = all(p.read_bytes().startswith(b"ROUTER-FIRMWARE-UNFLASHABLE" + bytes([0])) for p in artifacts)
+    if not fixture and (definition.get("status") != "supported" or partitions.get("status") != "verified"):
+        fail("refusing artifact attestation: device and partition map must be supported/verified")
+    image_format = "router-firmware-unflashable-fixture" if fixture else definition.get("format", "")
+    if image_format not in ARTIFACT_FORMATS:
+        fail(f"unsupported artifact format: {image_format or 'unset'}")
+    entries = [{
+        "name": p.name,
+        "sha256": hashlib.file_digest(p.open("rb"), "sha256").hexdigest(),
+        "size": p.stat().st_size,
+        "format": image_format,
+    } for p in artifacts]
     if not fixture:
         source_locks(strict=True)
     stamp = os.environ.get("SOURCE_DATE_EPOCH")
     created = datetime.fromtimestamp(int(stamp), timezone.utc).isoformat().replace("+00:00", "Z") if stamp else datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     manifest = {
-        "schema": 1,
+        "schema": 2,
         "device": device,
         "artifacts": entries,
         "created": created,

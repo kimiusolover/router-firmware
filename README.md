@@ -85,11 +85,26 @@ map, and signed-image format are verified. Consequently, only `make verify`
 can succeed for this target today; later stages fail closed without downloading
 or producing a firmware image.
 
+## AX23V compatibility record
+
+`devices/ax23v-v1/hardware-overlay.yaml` captures the currently evidenced
+AX23V delta from the upstream Archer AX23 v1 profile without enabling image
+assembly.  The relevant difference is physical Ethernet wiring: AX23V uses
+GMAC1/PHY0 for WAN and DSA ports 1–4 for LAN1–LAN4.  The overlay also records
+the observed AX23V SafeLoader support-list identity.  Inherited NVMEM, radio,
+GPIO, MAC, and partition information remains explicitly marked for on-device
+verification.  See `devices/ax23v-v1/evidence.md` for sources and the required
+validation sequence.
+
 ## Repository boundary
 
 - `router-firmware`: creates and attests firmware artifacts.
 - `routerctl`: fetches manifests/releases and operates compatible devices; it
   contains no kernel or rootfs build logic.
 
-Artifacts, when enabled, are written to `dist/` with a manifest, checksums, and
-provenance record. No release artifact may contain preserved device data.
+Artifacts, when enabled, are written to `dist/` with a schema-v2 manifest,
+checksums, and provenance record. Every manifest artifact records its name,
+SHA-256, byte size, and format; `board_id` is emitted only when directly known.
+The allowed formats are `tplink-safeloader`, `openwrt-sysupgrade`, and
+`router-firmware-unflashable-fixture`. No release artifact may contain
+preserved device data.
