@@ -31,7 +31,7 @@ jobs:
           ref: 2288cd8a559bca2b10e13251570cccd22383f9a2
           path: routerctl
       - name: Set up the pinned verifier Go toolchain
-        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: routerctl/go.mod
           cache-dependency-path: routerctl/go.sum
