@@ -1,0 +1,18 @@
+schema: router-firmware.tiny-features/v1
+package: kea
+required:
+  - dhcp4
+  - dhcp6
+conditional:
+  - feature: hooks
+    requires:
+      - deployment.kea.hooks
+excluded:
+  - ddns
+  - control-agent
+  - netconf
+  - tests
+  - examples
+  - documentation
+upstream-required:
+  - log4cplus

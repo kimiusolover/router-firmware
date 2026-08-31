@@ -1,0 +1,15 @@
+schema: router-firmware.tiny-features/v1
+package: unbound
+required:
+  - recursive-cache
+conditional:
+  - feature: remote-control
+    requires:
+      - deployment.unbound.remote-control
+excluded:
+  - python-module
+  - doh
+  - examples
+  - documentation
+upstream-required:
+  - openssl

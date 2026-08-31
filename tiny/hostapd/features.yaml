@@ -1,0 +1,35 @@
+schema: router-firmware.tiny-features/v1
+package: hostapd
+required:
+  - ap
+  - nl80211
+  - ieee80211n
+  - wpa2
+  - wpa3
+  - sae
+conditional:
+  - feature: ieee80211ac
+    requires:
+      - device.wifi.vht
+  - feature: ieee80211ax
+    requires:
+      - device.wifi.he
+  - feature: ieee80211r
+    requires:
+      - deployment.wifi.roaming
+  - feature: ieee80211k
+    requires:
+      - deployment.wifi.roaming
+  - feature: ieee80211v
+    requires:
+      - deployment.wifi.roaming
+  - feature: mesh
+    requires:
+      - device.wifi.mesh
+      - certification.wifi.mesh
+excluded:
+  - wps
+  - wired-authenticator
+  - unnecessary-eap-methods
+upstream-required:
+  - libnl

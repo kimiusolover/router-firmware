@@ -25,6 +25,7 @@ into a release image:
 ```sh
 make help
 make verify DEVICE=ax23v-v1
+make plan-tiny DEVICE=ax23v-v1
 make build DEVICE=ax23v-v1
 ```
 
@@ -90,6 +91,23 @@ AX23V remains in discovery until its board support, source revisions, partition
 map, and signed-image format are verified. Consequently, only `make verify`
 can succeed for this target today; later stages fail closed without downloading
 or producing a firmware image.
+
+## Tiny package policy
+
+`tiny/<package>/features.yaml` is a reusable, machine-readable policy layer
+for systemd, Kea, Unbound, hostapd, and Jool. It uses the common
+`required` / `conditional` / `excluded` / `upstream-required` classification
+and never contains upstream source copies. `make plan-tiny DEVICE=ax23v-v1`
+combines that policy with device capabilities, an optional certification
+profile, and an optional deployment policy to write `build/<device>/tiny.plan.json`.
+Missing, unset, or non-true requirements leave a conditional feature out.
+
+The AX23V capability input deliberately leaves VHT, HE, and mesh unset; the
+planner must not infer them from AX23 v1. The output is only a proposed build
+profile (including systemd binary and unit allowlists), never authorization to
+build, transmit, flash, or release an image. The formal contract is
+`docs/tiny-planner-specification.yaml`; the per-package policy schema is
+`schemas/tiny-features.schema.json`.
 
 ## AX23V compatibility record
 

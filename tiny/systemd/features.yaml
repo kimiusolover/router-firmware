@@ -1,0 +1,30 @@
+schema: router-firmware.tiny-features/v1
+package: systemd
+required:
+  - pid1
+  - udev
+  - networkd
+conditional:
+  - feature: resolved
+    requires:
+      - deployment.dns.systemd-resolved
+excluded:
+  - homed
+  - userdb
+  - portable
+  - machined
+  - importd
+  - container
+upstream-required:
+  - libmount
+binaries:
+  required:
+    - systemd
+    - systemctl
+    - journalctl
+    - networkctl
+    - udevadm
+units:
+  required:
+    - systemd-udevd.service
+    - systemd-networkd.service
