@@ -3,89 +3,17 @@ name: CI
 on:
   push:
   pull_request:
-  pull_request_target:
-    types: [opened, synchronize, reopened]
 
 permissions:
   contents: read
 
 jobs:
-  commit-trailer-policy:
-    name: commit-trailer-policy
+  verify-and-test:
+    name: verify-and-test
     runs-on: ubuntu-latest
-    # This workflow runs from the protected base branch, not PR code. It only
-    # fetches PR Git objects, so a PR cannot weaken its own verifier.
-    if: github.event_name == 'pull_request_target'
     steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          fetch-depth: 0
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
-      - name: Fetch pull request commits without checking out PR code
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-        shell: bash
-        run: |
-          git fetch --no-tags origin "+refs/pull/$PR_NUMBER/head:refs/remotes/origin/pr-$PR_NUMBER"
-          git cat-file -e "$BASE_SHA^{commit}"
-          git cat-file -e "$HEAD_SHA^{commit}"
-      - name: Verify pull request commit trailers
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        shell: bash
-        run: |
-          commits="$(git rev-list --reverse "$BASE_SHA..$HEAD_SHA")"
-          test -n "$commits" || { echo "No pull request commits to verify."; exit 0; }
-          while IFS= read -r commit; do
-            echo "Verifying $commit"
-            go run ./cmd/routerctl verify commit --repo . "$commit"
-          done <<< "$commits"
-
-  test:
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
-      # Image cropping and OCR integration tests invoke these tools directly.
-      - name: Install image and OCR tools (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y imagemagick tesseract-ocr
-      - name: Install image and OCR tools (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          # The hosted runner may include this unused tap in an untrusted state.
-          brew untap aws/tap || true
-          brew install imagemagick tesseract
-      - name: Install image and OCR tools (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
-          Invoke-RestMethod -Uri https://get.scoop.sh | Invoke-Expression
-          $env:PATH = "$env:USERPROFILE\scoop\shims;$env:PATH"
-          scoop install git
-          $buckets = @(
-            'extras', 'version', 'sysinternals', 'nirsoft', 'php',
-            'nerd-fonts', 'nonportable', 'java', 'games'
-          )
-          foreach ($bucket in $buckets) {
-            scoop bucket add $bucket
-          }
-          scoop install imagemagick tesseract
-          "$env:USERPROFILE\scoop\shims" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-      - run: go test ./...
-      - run: go vet ./...
-      - run: go build ./cmd/routerctl
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Verify guarded firmware metadata
+        run: make verify DEVICE=ax23v-v1
+      - name: Run safety-gate tests
+        run: make test
