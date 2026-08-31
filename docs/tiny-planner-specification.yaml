@@ -1,0 +1,21 @@
+# The tiny layer is a reusable package policy. It is separate from device facts,
+# RF authorization, source locks, and image authorization.
+schema: router-firmware.tiny-planner-specification/v1
+purpose: >-
+  Select the smallest declared upstream feature set justified by package policy
+  plus independently supplied device, certification, and deployment inputs.
+classification:
+  required: Always selected when the package is composed.
+  conditional: Selected only when every declared requirement is explicitly true.
+  excluded: Never selected by this product policy.
+  upstream-required: Required to build upstream, but not enabled as a product feature.
+rules:
+  - Tiny-layer files must not contain copied upstream source code.
+  - A missing, unset, false, or unknown requirement rejects the conditional feature.
+  - Device capability and certification inputs may only enable conditionals; they may not select an excluded feature.
+  - A tiny plan is a build-configuration proposal, not hardware, RF, or image authorization.
+  - Systemd binary and unit allowlists are emitted separately.
+generated_profile:
+  schema: router-firmware.tiny-profile/v1
+  status: proposed
+  fields: [package, selected, excluded, upstream_required, unresolved_conditionals]

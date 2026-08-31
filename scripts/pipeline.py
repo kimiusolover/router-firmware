@@ -287,6 +287,84 @@ def plan_storage(device: str) -> None:
     print(output.relative_to(ROOT))
 
 
+def tiny_feature_policy(path: Path) -> dict[str, object]:
+    """Parse the deliberately small YAML subset used by tiny feature policy."""
+    result: dict[str, object] = {"required": [], "conditional": [], "excluded": [], "upstream-required": []}
+    section = nested = None
+    current: dict[str, object] | None = None
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line, stripped = raw.rstrip(), raw.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if not line.startswith(" ") and ":" in line:
+            key, value = line.split(":", 1)
+            section, nested, current = key, None, None
+            if value.strip(): result[key] = value.strip().strip("'\"")
+        elif section in {"required", "excluded", "upstream-required"} and line.startswith("  - "):
+            result[section].append(stripped[2:].strip())
+        elif section == "conditional" and line.startswith("  - feature:"):
+            current = {"feature": line.split(":", 1)[1].strip(), "requires": []}; result["conditional"].append(current)
+        elif section == "conditional" and line.startswith("    requires:") and current is not None:
+            nested = "requires"
+        elif section == "conditional" and nested == "requires" and line.startswith("      - ") and current is not None:
+            current["requires"].append(stripped[2:].strip())
+        elif section in {"binaries", "units"} and line.startswith("  required:"):
+            result[section] = []; nested = "required"
+        elif section in {"binaries", "units"} and nested == "required" and line.startswith("    - "):
+            result[section].append(stripped[2:].strip())
+        else:
+            fail(f"{path}: unsupported tiny policy syntax: {raw}")
+    for field in ("schema", "package", "required", "conditional", "excluded", "upstream-required"):
+        if not result.get(field): fail(f"{path}: missing or empty {field}")
+    if result["schema"] != "router-firmware.tiny-features/v1": fail(f"{path}: unsupported schema")
+    names = set(result["required"]) | {str(item["feature"]) for item in result["conditional"]}
+    for field in ("excluded", "upstream-required"):
+        overlap = names.intersection(result[field])
+        if overlap: fail(f"{path}: feature classified more than once: {', '.join(sorted(overlap))}")
+    return result
+
+
+def yaml_truths(path: Path) -> dict[str, bool]:
+    """Flatten true/false scalar input; unset, missing, and unknown are false."""
+    values: dict[str, bool] = {}; parents: list[tuple[int, str]] = []
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        if not raw.strip() or raw.lstrip().startswith("#") or ":" not in raw: continue
+        indent = len(raw) - len(raw.lstrip(" ")); key, value = raw.strip().split(":", 1)
+        while parents and parents[-1][0] >= indent: parents.pop()
+        if value.strip(): values[".".join([part for _, part in parents] + [key])] = value.strip().lower() == "true"
+        else: parents.append((indent, key))
+    return values
+
+
+def plan_tiny(device: str, deployment_policy: str | None = None) -> None:
+    """Emit proposal-only package profiles; this never authorizes a build or image."""
+    verify(device)
+    directory, _, _ = device_paths(device); capability_path = directory / "tiny-capabilities.yaml"; cert_path = directory / "certification-profile.yaml"
+    if not capability_path.is_file(): fail(f"missing tiny capability input: {capability_path}")
+    inputs = {"device": yaml_truths(capability_path), "certification": yaml_truths(cert_path) if cert_path.is_file() else {}, "deployment": {}}
+    if deployment_policy:
+        policy_path = Path(deployment_policy).resolve()
+        if not policy_path.is_file(): fail(f"deployment policy is not a file: {policy_path}")
+        inputs["deployment"] = yaml_truths(policy_path)
+    requested = {line.strip() for line in (directory / "packages.txt").read_text(encoding="utf-8").splitlines() if line.strip() and not line.lstrip().startswith("#")}
+    profiles: list[dict[str, object]] = []
+    for path in sorted((ROOT / "tiny").glob("*/features.yaml")):
+        policy = tiny_feature_policy(path); package = str(policy["package"])
+        if package not in requested: fail(f"{path}: package is not in {directory / 'packages.txt'}")
+        selected, unresolved = list(policy["required"]), []
+        for conditional in policy["conditional"]:
+            requirements = list(conditional["requires"])
+            missing = [name for name in requirements if not inputs.get(name.split(".", 1)[0], {}).get(name.split(".", 1)[1], False)]
+            if missing: unresolved.append({"feature": conditional["feature"], "missing_requirements": missing})
+            else: selected.append(conditional["feature"])
+        profile: dict[str, object] = {"package": package, "selected": selected, "excluded": policy["excluded"], "upstream_required": policy["upstream-required"], "unresolved_conditionals": unresolved}
+        for name in ("binaries", "units"):
+            if name in policy: profile[f"{name}_allowlist"] = policy[name]
+        profiles.append(profile)
+    plan = {"schema": "router-firmware.tiny-plan/v1", "device": device, "status": "proposed", "image_authorized": False, "profiles": profiles, "inputs": {"device": str(capability_path.relative_to(ROOT)), "certification": str(cert_path.relative_to(ROOT)) if cert_path.is_file() else "unset", "deployment": deployment_policy or "unset"}}
+    output = build_dir(device) / "tiny.plan.json"; output.write_text(json.dumps(plan, indent=2, sort_keys=True) + "\n", encoding="utf-8"); print(output.relative_to(ROOT))
+
+
 def write_sbom(device: str, fixture: bool, entries: list[dict[str, object]], created: str) -> Path:
     """Emit a deterministic CycloneDX inventory for the release artifact set."""
     components = [{
@@ -397,11 +475,12 @@ def attest(device: str) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=("verify", "fetch", "build", "rootfs", "image", "sample-image", "attest", "plan-storage"))
+    parser.add_argument("command", choices=("verify", "fetch", "build", "rootfs", "image", "sample-image", "attest", "plan-storage", "plan-tiny"))
     parser.add_argument("--device", required=True)
     parser.add_argument("--strict", action="store_true")
+    parser.add_argument("--deployment-policy")
     args = parser.parse_args()
-    {"verify": lambda: verify(args.device, args.strict), "fetch": lambda: fetch(args.device), "build": lambda: build(args.device), "rootfs": lambda: rootfs(args.device), "image": lambda: image(args.device), "sample-image": lambda: sample_image(args.device), "attest": lambda: attest(args.device), "plan-storage": lambda: plan_storage(args.device)}[args.command]()
+    {"verify": lambda: verify(args.device, args.strict), "fetch": lambda: fetch(args.device), "build": lambda: build(args.device), "rootfs": lambda: rootfs(args.device), "image": lambda: image(args.device), "sample-image": lambda: sample_image(args.device), "attest": lambda: attest(args.device), "plan-storage": lambda: plan_storage(args.device), "plan-tiny": lambda: plan_tiny(args.device, args.deployment_policy)}[args.command]()
 
 
 if __name__ == "__main__":

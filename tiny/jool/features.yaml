@@ -1,0 +1,15 @@
+schema: router-firmware.tiny-features/v1
+package: jool
+required:
+  - nat64
+  - siit
+conditional:
+  - feature: global-pool6
+    requires:
+      - deployment.jool.global-pool6
+excluded:
+  - tests
+  - examples
+  - documentation
+upstream-required:
+  - kernel-netfilter-api
