@@ -40,7 +40,7 @@ jobs:
           go run ./routerctl/cmd/routerctl verify-release \
             dist/ax23v-v1.manifest.json dist/SHA256SUMS dist/provenance.json
       - name: Install Cosign
-        uses: sigstore/cosign-installer@3454372f43399081ed03b604cb2d021dabca52bb # v3.8.2
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
       - name: Keylessly sign release artifact, manifest, and SBOM
         run: |
           for subject in \
