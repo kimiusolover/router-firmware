@@ -1,8 +1,0 @@
-# Capability evidence for Tiny Planner. This must not be inferred from the
-# AX23 v1 base profile; unknown values remain unset and select nothing.
-schema: router-firmware.tiny-capabilities/v1
-status: discovery
-wifi:
-  vht: unset
-  he: unset
-  mesh: unset

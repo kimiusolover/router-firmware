@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+PLATFORM_ROOT = Path(os.environ.get("ROUTER_PLATFORM_ROOT", str(ROOT.parent / "router-platform"))).resolve()
 ARTIFACT_FORMATS = {
     "tplink-safeloader",
     "openwrt-sysupgrade",
@@ -63,10 +64,33 @@ def fail(message: str) -> None:
 
 
 def device_paths(device: str) -> tuple[Path, Path, Path]:
+    # Board facts are owned by router-platform. Do not silently read the
+    # retired firmware-local copy: a missing checkout must stop the pipeline.
+    device_directories = {
+        "ax23v-v1": PLATFORM_ROOT / "devices" / "tplink" / "archer-ax23v-v1",
+        "x86_64-qemu-uefi-preview": PLATFORM_ROOT / "devices" / "generic" / "x86_64-qemu-uefi-preview",
+    }
+    directory = device_directories.get(device)
+    if directory is None:
+        fail(f"unknown platform device: {device}")
+    if not directory.is_dir():
+        fail(f"platform data unavailable for {device}: {directory}")
+    return directory, directory / "device.yaml", directory / "partitions.yaml"
+
+
+def firmware_device_directory(device: str) -> Path:
     directory = ROOT / "devices" / device
     if not directory.is_dir():
-        fail(f"unknown device: {device}")
-    return directory, directory / "device.yaml", directory / "partitions.yaml"
+        fail(f"unknown firmware composition: {device}")
+    return directory
+
+
+def input_reference(path: Path) -> str:
+    """Return a stable workspace-relative reference for provenance output."""
+    try:
+        return str(path.relative_to(ROOT.parent))
+    except ValueError:
+        return str(path)
 
 
 def source_locks(strict: bool) -> list[tuple[Path, dict[str, str]]]:
@@ -95,10 +119,14 @@ def source_locks(strict: bool) -> list[tuple[Path, dict[str, str]]]:
 
 def verify(device: str, strict: bool = False) -> None:
     directory, definition_path, partitions_path = device_paths(device)
-    required = ("device.yaml", "partitions.yaml", "kernel.config", "packages.txt", "regulatory.yaml")
+    required = ("device.yaml", "partitions.yaml", "regulatory.yaml")
     for name in required:
         if not (directory / name).is_file():
             fail(f"missing {directory / name}")
+    composition = firmware_device_directory(device)
+    for name in ("kernel.config", "packages.txt"):
+        if not (composition / name).is_file():
+            fail(f"missing {composition / name}")
     definition = scalar_yaml(definition_path)
     partitions = scalar_yaml(partitions_path)
     if definition.get("id") != device:
@@ -108,18 +136,19 @@ def verify(device: str, strict: bool = False) -> None:
     if partitions.get("status") not in {"unverified", "verified"}:
         fail(f"{partitions_path}: invalid status")
     text = definition_path.read_text(encoding="utf-8")
-    for name in ("u-boot", "factory", "art"):
+    preserved = ("host-block-devices", "host-uefi-variables") if definition.get("deployment") == "qemu-ovmf-only" else ("u-boot", "factory", "art")
+    for name in preserved:
         if name not in text:
             fail(f"{definition_path}: preserved region {name} is required")
     locks = source_locks(strict)
     names = {values["name"] for _, values in locks}
     requested = {
-        line.strip() for line in (directory / "packages.txt").read_text(encoding="utf-8").splitlines()
+        line.strip() for line in (composition / "packages.txt").read_text(encoding="utf-8").splitlines()
         if line.strip() and not line.lstrip().startswith("#")
     }
     missing = requested - names
     if missing:
-        fail(f"{directory / 'packages.txt'}: no source lock for {', '.join(sorted(missing))}")
+        fail(f"{composition / 'packages.txt'}: no source lock for {', '.join(sorted(missing))}")
 
 
 def build_dir(device: str) -> Path:
@@ -179,6 +208,43 @@ def image(device: str) -> None:
     if not layout.is_file() or not os.access(layout, os.X_OK):
         fail(f"missing executable image layout: {layout}")
     subprocess.run([str(layout), str(build_dir(device) / "rootfs"), str(ROOT / "dist")], cwd=ROOT, check=True)
+
+
+def run_qemu(device: str, execute: bool = False) -> None:
+    """Prepare, or explicitly start, the isolated x86_64 preview VM."""
+    _, definition_path, _ = device_paths(device)
+    definition = scalar_yaml(definition_path)
+    if definition.get("deployment") != "qemu-ovmf-only":
+        fail(f"{device}: run-qemu is allowed only for qemu-ovmf-only targets")
+    image_name = definition.get("preview_image")
+    if not image_name or "/" in image_name or not image_name.endswith(".img"):
+        fail(f"{definition_path}: preview_image must be a simple .img filename")
+    image_path = ROOT / "dist" / image_name
+    metadata_path = ROOT / "dist" / f"{image_name}.qemu.json"
+    if not image_path.is_file() or image_path.is_symlink() or not metadata_path.is_file() or metadata_path.is_symlink():
+        fail("QEMU preview image and its qemu metadata must be built before run-qemu")
+    try:
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as error:
+        fail(f"invalid QEMU preview metadata: {error}")
+    if metadata != {"device": device, "qemu_only": True, "uefi": True, "version": 1}:
+        fail("refusing QEMU run: preview metadata is missing required QEMU-only constraints")
+    qemu_img, qemu, ovmf_code = shutil.which("qemu-img"), shutil.which("qemu-system-x86_64"), os.environ.get("OVMF_CODE")
+    if not qemu_img or not qemu or not ovmf_code:
+        fail("QEMU, qemu-img, and OVMF_CODE are required; no VM was started")
+    ovmf_path = Path(ovmf_code).resolve()
+    if not ovmf_path.is_file():
+        fail("OVMF_CODE must name a readable OVMF firmware file")
+    overlay = build_dir(device) / "qemu" / f"{image_name}.qcow2"
+    overlay.parent.mkdir(parents=True, exist_ok=True)
+    if not overlay.exists():
+        subprocess.run([qemu_img, "create", "-f", "qcow2", "-F", "raw", "-b", str(image_path.resolve()), str(overlay)], cwd=ROOT, check=True)
+    command = [qemu, "-machine", "q35", "-m", "1024", "-drive", f"if=pflash,format=raw,readonly=on,file={ovmf_path}", "-drive", f"if=virtio,format=qcow2,file={overlay}", "-nic", "user,model=virtio-net-pci", "-nic", "user,model=virtio-net-pci"]
+    if execute:
+        subprocess.run(command, cwd=ROOT, check=True)
+    else:
+        print("QEMU command prepared; rerun with --execute to start the isolated VM:")
+        print(" ".join(command))
 
 
 def sample_image(device: str) -> None:
@@ -280,7 +346,7 @@ def plan_storage(device: str) -> None:
             "blockers": [entry["code"] for entry in blockers],
         },
         "rejection_report": {"accepted": not blockers, "reasons": blockers},
-        "inputs": {name: str(path.relative_to(ROOT)) for name, path in paths.items()},
+        "inputs": {name: input_reference(path) for name, path in paths.items()},
     }
     output = build_dir(device) / "storage-layout.plan.json"
     output.write_text(json.dumps(plan, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -340,17 +406,18 @@ def plan_tiny(device: str, deployment_policy: str | None = None) -> None:
     """Emit proposal-only package profiles; this never authorizes a build or image."""
     verify(device)
     directory, _, _ = device_paths(device); capability_path = directory / "tiny-capabilities.yaml"; cert_path = directory / "certification-profile.yaml"
+    composition = firmware_device_directory(device)
     if not capability_path.is_file(): fail(f"missing tiny capability input: {capability_path}")
     inputs = {"device": yaml_truths(capability_path), "certification": yaml_truths(cert_path) if cert_path.is_file() else {}, "deployment": {}}
     if deployment_policy:
         policy_path = Path(deployment_policy).resolve()
         if not policy_path.is_file(): fail(f"deployment policy is not a file: {policy_path}")
         inputs["deployment"] = yaml_truths(policy_path)
-    requested = {line.strip() for line in (directory / "packages.txt").read_text(encoding="utf-8").splitlines() if line.strip() and not line.lstrip().startswith("#")}
+    requested = {line.strip() for line in (composition / "packages.txt").read_text(encoding="utf-8").splitlines() if line.strip() and not line.lstrip().startswith("#")}
     profiles: list[dict[str, object]] = []
     for path in sorted((ROOT / "tiny").glob("*/features.yaml")):
         policy = tiny_feature_policy(path); package = str(policy["package"])
-        if package not in requested: fail(f"{path}: package is not in {directory / 'packages.txt'}")
+        if package not in requested: fail(f"{path}: package is not in {composition / 'packages.txt'}")
         selected, unresolved = list(policy["required"]), []
         for conditional in policy["conditional"]:
             requirements = list(conditional["requires"])
@@ -361,7 +428,7 @@ def plan_tiny(device: str, deployment_policy: str | None = None) -> None:
         for name in ("binaries", "units"):
             if name in policy: profile[f"{name}_allowlist"] = policy[name]
         profiles.append(profile)
-    plan = {"schema": "router-firmware.tiny-plan/v1", "device": device, "status": "proposed", "image_authorized": False, "profiles": profiles, "inputs": {"device": str(capability_path.relative_to(ROOT)), "certification": str(cert_path.relative_to(ROOT)) if cert_path.is_file() else "unset", "deployment": deployment_policy or "unset"}}
+    plan = {"schema": "router-firmware.tiny-plan/v1", "device": device, "status": "proposed", "image_authorized": False, "profiles": profiles, "inputs": {"device": input_reference(capability_path), "certification": input_reference(cert_path) if cert_path.is_file() else "unset", "deployment": deployment_policy or "unset"}}
     output = build_dir(device) / "tiny.plan.json"; output.write_text(json.dumps(plan, indent=2, sort_keys=True) + "\n", encoding="utf-8"); print(output.relative_to(ROOT))
 
 
@@ -475,12 +542,13 @@ def attest(device: str) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=("verify", "fetch", "build", "rootfs", "image", "sample-image", "attest", "plan-storage", "plan-tiny"))
+    parser.add_argument("command", choices=("verify", "fetch", "build", "rootfs", "image", "sample-image", "attest", "plan-storage", "plan-tiny", "run-qemu"))
     parser.add_argument("--device", required=True)
     parser.add_argument("--strict", action="store_true")
     parser.add_argument("--deployment-policy")
+    parser.add_argument("--execute", action="store_true")
     args = parser.parse_args()
-    {"verify": lambda: verify(args.device, args.strict), "fetch": lambda: fetch(args.device), "build": lambda: build(args.device), "rootfs": lambda: rootfs(args.device), "image": lambda: image(args.device), "sample-image": lambda: sample_image(args.device), "attest": lambda: attest(args.device), "plan-storage": lambda: plan_storage(args.device), "plan-tiny": lambda: plan_tiny(args.device, args.deployment_policy)}[args.command]()
+    {"verify": lambda: verify(args.device, args.strict), "fetch": lambda: fetch(args.device), "build": lambda: build(args.device), "rootfs": lambda: rootfs(args.device), "image": lambda: image(args.device), "sample-image": lambda: sample_image(args.device), "attest": lambda: attest(args.device), "plan-storage": lambda: plan_storage(args.device), "plan-tiny": lambda: plan_tiny(args.device, args.deployment_policy), "run-qemu": lambda: run_qemu(args.device, args.execute)}[args.command]()
 
 
 if __name__ == "__main__":
