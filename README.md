@@ -20,6 +20,16 @@ into a release image:
 - Wi-Fi calibration / ART data
 - TP-Link factory and vendor-reserved partitions
 
+## x86_64 QEMU/OVMF preview
+
+`x86_64-qemu-uefi-preview` is an explicitly separate, QEMU/OVMF-only target.
+It does not support physical PCs, USB boot, Secure Boot, Wi-Fi, or writing an
+existing disk. Its image producer is intentionally blocked until the x86_64
+sources/toolchain, GPT/ESP layout, and QEMU end-to-end evidence are in place.
+`make run-qemu DEVICE=x86_64-qemu-uefi-preview` can only use a verified preview
+image through a copy-on-write VM overlay under `build/`; starting it requires
+the explicit `QEMU_ARGS=--execute`. See `docs/x86_64-qemu-uefi-preview.md`.
+
 ## Commands
 
 ```sh
@@ -71,7 +81,8 @@ They deliberately stop before producing output until the target architecture,
 cross toolchain, ABI, and source locks are known. This is intentional: a
 successful command must never be mistaken for a usable AX23V firmware build.
 
-`devices/ax23v-v1/partitions.yaml` has no inferred geometry and
+The canonical platform record at
+`../router-platform/devices/tplink/archer-ax23v-v1/partitions.yaml` has no inferred geometry and
 `image/layouts/ax23v-v1.sh` is an explicit refusal gate. Both are replaced only
 from documented stock-image and bootloader evidence, with a review that proves
 the preserve list cannot be written.
@@ -111,18 +122,20 @@ build, transmit, flash, or release an image. The formal contract is
 
 ## AX23V compatibility record
 
-`devices/ax23v-v1/hardware-overlay.yaml` captures the currently evidenced
+`router-platform/devices/tplink/archer-ax23v-v1/hardware-overlay.yaml` captures the currently evidenced
 AX23V delta from the upstream Archer AX23 v1 profile without enabling image
 assembly.  The relevant difference is physical Ethernet wiring: AX23V uses
 GMAC1/PHY0 for WAN and DSA ports 1–4 for LAN1–LAN4.  The overlay also records
 the observed AX23V SafeLoader support-list identity.  Inherited NVMEM, radio,
 GPIO, MAC, and partition information remains explicitly marked for on-device
-verification.  See `devices/ax23v-v1/evidence.md` for sources and the required
+verification. See `router-platform/devices/tplink/archer-ax23v-v1/evidence.md` for sources and the required
 validation sequence.
 
 ## Repository boundary
 
 - `router-firmware`: creates and attests firmware artifacts.
+- `router-platform`: owns canonical board/platform data; this repository reads
+  its sibling checkout by default, or the checkout given by `ROUTER_PLATFORM_ROOT`.
 - `routerctl`: fetches manifests/releases and operates compatible devices; it
   contains no kernel or rootfs build logic.
 
