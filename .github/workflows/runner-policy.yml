@@ -1,0 +1,19 @@
+name: runner policy
+
+on:
+  pull_request:
+    paths: ['.github/workflows/**']
+  push:
+    branches: [main]
+    paths: ['.github/workflows/**']
+
+permissions:
+  contents: read
+
+jobs:
+  github-hosted-only:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Reject non-hosted runner labels
+        run: '! rg -n -i "self[-_]hosted" .github/workflows'
