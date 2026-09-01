@@ -20,6 +20,17 @@ into a release image:
 - Wi-Fi calibration / ART data
 - TP-Link factory and vendor-reserved partitions
 
+## x86_64 QEMU/OVMF preview
+
+`x86_64-qemu-uefi-preview` is an explicitly separate, QEMU/OVMF-only target.
+It does not support physical PCs, USB boot, Secure Boot, Wi-Fi, or writing an
+existing disk. Its image producer is intentionally blocked until the x86_64
+sources/toolchain, GPT/ESP layout, and QEMU end-to-end evidence are in place.
+When that producer exists, `make run-qemu DEVICE=x86_64-qemu-uefi-preview`
+will use only a copy-on-write VM overlay under `build/`; it never takes a host
+block-device argument. Starting it requires an explicit
+`QEMU_ARGS=--execute`. See `docs/x86_64-qemu-uefi-preview.md`.
+
 ## Commands
 
 ```sh

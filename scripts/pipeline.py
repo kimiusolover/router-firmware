@@ -108,7 +108,8 @@ def verify(device: str, strict: bool = False) -> None:
     if partitions.get("status") not in {"unverified", "verified"}:
         fail(f"{partitions_path}: invalid status")
     text = definition_path.read_text(encoding="utf-8")
-    for name in ("u-boot", "factory", "art"):
+    preserved = ("host-block-devices", "host-uefi-variables") if definition.get("deployment") == "qemu-ovmf-only" else ("u-boot", "factory", "art")
+    for name in preserved:
         if name not in text:
             fail(f"{definition_path}: preserved region {name} is required")
     locks = source_locks(strict)
@@ -179,6 +180,47 @@ def image(device: str) -> None:
     if not layout.is_file() or not os.access(layout, os.X_OK):
         fail(f"missing executable image layout: {layout}")
     subprocess.run([str(layout), str(build_dir(device) / "rootfs"), str(ROOT / "dist")], cwd=ROOT, check=True)
+
+
+def run_qemu(device: str, execute: bool = False) -> None:
+    """Prepare (or explicitly start) the isolated x86_64 preview VM.
+
+    Only repository preview metadata is accepted. The distributed raw image is
+    never modified: QEMU uses a copy-on-write overlay under build/.
+    """
+    _, definition_path, _ = device_paths(device)
+    definition = scalar_yaml(definition_path)
+    if definition.get("deployment") != "qemu-ovmf-only":
+        fail(f"{device}: run-qemu is allowed only for qemu-ovmf-only targets")
+    image_name = definition.get("preview_image")
+    if not image_name or "/" in image_name or not image_name.endswith(".img"):
+        fail(f"{definition_path}: preview_image must be a simple .img filename")
+    image_path = ROOT / "dist" / image_name
+    metadata_path = ROOT / "dist" / f"{image_name}.qemu.json"
+    if not image_path.is_file() or image_path.is_symlink() or not metadata_path.is_file() or metadata_path.is_symlink():
+        fail("QEMU preview image and its qemu metadata must be built before run-qemu")
+    try:
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as error:
+        fail(f"invalid QEMU preview metadata: {error}")
+    if metadata != {"device": device, "qemu_only": True, "uefi": True, "version": 1}:
+        fail("refusing QEMU run: preview metadata is missing required QEMU-only constraints")
+    qemu_img, qemu, ovmf_code = shutil.which("qemu-img"), shutil.which("qemu-system-x86_64"), os.environ.get("OVMF_CODE")
+    if not qemu_img or not qemu or not ovmf_code:
+        fail("QEMU, qemu-img, and OVMF_CODE are required; no VM was started")
+    ovmf_path = Path(ovmf_code).resolve()
+    if not ovmf_path.is_file():
+        fail("OVMF_CODE must name a readable OVMF firmware file")
+    overlay = build_dir(device) / "qemu" / f"{image_name}.qcow2"
+    overlay.parent.mkdir(parents=True, exist_ok=True)
+    if not overlay.exists():
+        subprocess.run([qemu_img, "create", "-f", "qcow2", "-F", "raw", "-b", str(image_path.resolve()), str(overlay)], cwd=ROOT, check=True)
+    command = [qemu, "-machine", "q35", "-m", "1024", "-drive", f"if=pflash,format=raw,readonly=on,file={ovmf_path}", "-drive", f"if=virtio,format=qcow2,file={overlay}", "-nic", "user,model=virtio-net-pci", "-nic", "user,model=virtio-net-pci"]
+    if execute:
+        subprocess.run(command, cwd=ROOT, check=True)
+    else:
+        print("QEMU command prepared; rerun with --execute to start the isolated VM:")
+        print(" ".join(command))
 
 
 def sample_image(device: str) -> None:
@@ -475,12 +517,13 @@ def attest(device: str) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=("verify", "fetch", "build", "rootfs", "image", "sample-image", "attest", "plan-storage", "plan-tiny"))
+    parser.add_argument("command", choices=("verify", "fetch", "build", "rootfs", "image", "sample-image", "attest", "plan-storage", "plan-tiny", "run-qemu"))
     parser.add_argument("--device", required=True)
     parser.add_argument("--strict", action="store_true")
     parser.add_argument("--deployment-policy")
+    parser.add_argument("--execute", action="store_true")
     args = parser.parse_args()
-    {"verify": lambda: verify(args.device, args.strict), "fetch": lambda: fetch(args.device), "build": lambda: build(args.device), "rootfs": lambda: rootfs(args.device), "image": lambda: image(args.device), "sample-image": lambda: sample_image(args.device), "attest": lambda: attest(args.device), "plan-storage": lambda: plan_storage(args.device), "plan-tiny": lambda: plan_tiny(args.device, args.deployment_policy)}[args.command]()
+    {"verify": lambda: verify(args.device, args.strict), "fetch": lambda: fetch(args.device), "build": lambda: build(args.device), "rootfs": lambda: rootfs(args.device), "image": lambda: image(args.device), "sample-image": lambda: sample_image(args.device), "attest": lambda: attest(args.device), "plan-storage": lambda: plan_storage(args.device), "plan-tiny": lambda: plan_tiny(args.device, args.deployment_policy), "run-qemu": lambda: run_qemu(args.device, args.execute)}[args.command]()
 
 
 if __name__ == "__main__":

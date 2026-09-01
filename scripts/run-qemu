@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# This runner has no physical-disk arguments. It boots only a copy-on-write
+# overlay of the repository preview image; pass --execute only after review.
+set -euo pipefail
+exec python3 scripts/pipeline.py run-qemu "$@"

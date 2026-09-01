@@ -60,7 +60,9 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Verify guarded firmware metadata
-        run: make verify DEVICE=ax23v-v1
+        run: |
+          make verify DEVICE=ax23v-v1
+          make verify DEVICE=x86_64-qemu-uefi-preview
 
   test:
     strategy:

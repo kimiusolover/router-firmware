@@ -1,0 +1,21 @@
+schema: ../../schemas/device.schema.json
+id: x86_64-qemu-uefi-preview
+vendor: Router OS
+product: x86_64 UEFI QEMU preview
+hardware_version: virtual
+status: discovery
+architecture: x86_64
+deployment: qemu-ovmf-only
+preview_image: routeros-x86_64-uefi-preview.img
+kernel_config: kernel.config
+packages: packages.txt
+regulatory: regulatory.yaml
+partitions: partitions.yaml
+preserve:
+  - host-block-devices
+  - host-uefi-variables
+image:
+  format: null
+  signing: null
+  rootfs: unset
+  layout: ../../image/layouts/x86_64-qemu-uefi-preview.sh

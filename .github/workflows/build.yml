@@ -12,7 +12,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Validate pipeline inputs
-        run: make verify DEVICE=ax23v-v1
+        run: |
+          make verify DEVICE=ax23v-v1
+          make verify DEVICE=x86_64-qemu-uefi-preview
       - name: Run repository tests
         run: make test
       - name: Report guarded target status

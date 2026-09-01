@@ -25,6 +25,41 @@ class PipelineTests(unittest.TestCase):
         result = self.run_pipeline("verify", "--device", "ax23v-v1")
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_qemu_preview_metadata_is_valid_but_image_assembly_is_blocked(self) -> None:
+        verified = self.run_pipeline("verify", "--device", "x86_64-qemu-uefi-preview")
+        self.assertEqual(verified.returncode, 0, verified.stderr)
+        image = self.run_pipeline("image", "--device", "x86_64-qemu-uefi-preview")
+        self.assertNotEqual(image.returncode, 0)
+        self.assertIn("status: locked", image.stderr)
+
+    def test_qemu_runner_requires_a_verified_preview_artifact(self) -> None:
+        result = self.run_pipeline("run-qemu", "--device", "x86_64-qemu-uefi-preview")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("QEMU preview image", result.stderr)
+
+    def test_qemu_runner_rejects_a_symlinked_preview_artifact(self) -> None:
+        dist = ROOT / "dist"
+        dist.mkdir(exist_ok=True)
+        image = dist / "routeros-x86_64-uefi-preview.img"
+        metadata = dist / "routeros-x86_64-uefi-preview.img.qemu.json"
+        target = dist / "not-a-preview.img"
+        try:
+            target.write_bytes(b"not a preview")
+            image.symlink_to(target.name)
+            metadata.write_text('{"device":"x86_64-qemu-uefi-preview","qemu_only":true,"uefi":true,"version":1}', encoding="utf-8")
+            result = self.run_pipeline("run-qemu", "--device", "x86_64-qemu-uefi-preview")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("QEMU preview image", result.stderr)
+        finally:
+            image.unlink(missing_ok=True)
+            metadata.unlink(missing_ok=True)
+            target.unlink(missing_ok=True)
+
+    def test_qemu_runner_rejects_non_qemu_targets(self) -> None:
+        result = self.run_pipeline("run-qemu", "--device", "ax23v-v1")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("qemu-ovmf-only", result.stderr)
+
     def test_unlocked_sources_cannot_be_fetched(self) -> None:
         result = self.run_pipeline("fetch", "--device", "ax23v-v1")
         self.assertNotEqual(result.returncode, 0)

@@ -1,0 +1,6 @@
+status: unverified
+evidence: qemu-only-preview-image-layout-not-yet-implemented
+preserve:
+  - host-block-devices
+  - host-uefi-variables
+writable_partitions: []
