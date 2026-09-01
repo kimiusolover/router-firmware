@@ -51,7 +51,10 @@ jobs:
           test -n "$commits" || { echo "No pull request commits to verify."; exit 0; }
           while IFS= read -r commit; do
             echo "Verifying $commit"
-            go run ./routerctl/cmd/routerctl verify commit --repo . "$commit"
+            (
+              cd routerctl
+              go run ./cmd/routerctl verify commit --repo .. "$commit"
+            )
           done <<< "$commits"
 
   firmware-metadata-verification:
