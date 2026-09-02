@@ -239,7 +239,11 @@ def run_qemu(device: str, execute: bool = False) -> None:
     overlay.parent.mkdir(parents=True, exist_ok=True)
     if not overlay.exists():
         subprocess.run([qemu_img, "create", "-f", "qcow2", "-F", "raw", "-b", str(image_path.resolve()), str(overlay)], cwd=ROOT, check=True)
-    command = [qemu, "-machine", "q35", "-m", "1024", "-drive", f"if=pflash,format=raw,readonly=on,file={ovmf_path}", "-drive", f"if=virtio,format=qcow2,file={overlay}", "-nic", "user,model=virtio-net-pci", "-nic", "user,model=virtio-net-pci"]
+    # Milestone 0 is deliberately serial-only. e1000e is used instead of
+    # virtio-net because it is the driver family required by the preview
+    # kernel contract; the two interfaces are reserved for the later WAN/LAN
+    # DHCP/DNS/firewall E2E milestone.
+    command = [qemu, "-machine", "q35", "-m", "1024", "-display", "none", "-serial", "stdio", "-drive", f"if=pflash,format=raw,readonly=on,file={ovmf_path}", "-drive", f"if=virtio,format=qcow2,file={overlay}", "-nic", "user,model=e1000e", "-nic", "user,model=e1000e"]
     if execute:
         subprocess.run(command, cwd=ROOT, check=True)
     else:

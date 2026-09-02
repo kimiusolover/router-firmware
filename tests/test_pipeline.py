@@ -36,6 +36,12 @@ class PipelineTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("status: locked", result.stderr)
 
+    def test_qemu_preview_runner_is_serial_only_with_two_e1000e_nics(self) -> None:
+        runner = (ROOT / "scripts" / "pipeline.py").read_text(encoding="utf-8")
+        self.assertIn('"-display", "none", "-serial", "stdio"', runner)
+        self.assertEqual(runner.count('"user,model=e1000e"'), 2)
+        self.assertNotIn('"user,model=virtio-net-pci"', runner)
+
     def test_sample_image_is_deterministic_and_unflashable(self) -> None:
         artifact = ROOT / "dist" / "ax23v-v1.bin"
         manifest = ROOT / "dist" / "ax23v-v1.manifest.json"
