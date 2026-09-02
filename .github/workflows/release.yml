@@ -18,9 +18,19 @@ jobs:
       ROUTERCTL_VERIFIER_COMMIT: "2288cd8a559bca2b10e13251570cccd22383f9a2"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check out pinned platform metadata
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: kimiusolover/router-platform
+          ref: 841a8af0445b1d1a46558ba1df8435d222e38cd4
+          path: router-platform
       - name: Verify discovery target metadata
+        env:
+          ROUTER_PLATFORM_ROOT: ${{ github.workspace }}/router-platform
         run: make verify DEVICE=ax23v-v1
       - name: Build deterministic release fixture
+        env:
+          ROUTER_PLATFORM_ROOT: ${{ github.workspace }}/router-platform
         run: |
           make sample-image DEVICE=ax23v-v1
           make attest DEVICE=ax23v-v1
