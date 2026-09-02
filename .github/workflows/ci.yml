@@ -41,6 +41,10 @@ jobs:
           git fetch --no-tags origin "+refs/pull/$PR_NUMBER/head:refs/remotes/origin/pr-$PR_NUMBER"
           git cat-file -e "$BASE_SHA^{commit}"
           git cat-file -e "$HEAD_SHA^{commit}"
+          # routerctl's verifier deliberately rejects a detached repository.
+          # Keep the checked-out base code while attaching it to a runner-local
+          # branch for the read-only commit inspection below.
+          git switch --force-create trailer-verifier-base "$BASE_SHA"
       - name: Verify pull request commit trailers
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
@@ -62,7 +66,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - name: Check out pinned platform metadata
+        uses: actions/checkout@v6
+        with:
+          repository: kimiusolover/router-platform
+          ref: 841a8af0445b1d1a46558ba1df8435d222e38cd4
+          path: router-platform
       - name: Verify guarded firmware metadata
+        env:
+          ROUTER_PLATFORM_ROOT: ${{ github.workspace }}/router-platform
         run: make verify DEVICE=ax23v-v1
 
   test:
@@ -72,8 +84,16 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
+      - name: Check out pinned platform metadata
+        uses: actions/checkout@v6
+        with:
+          repository: kimiusolover/router-platform
+          ref: 841a8af0445b1d1a46558ba1df8435d222e38cd4
+          path: router-platform
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
       - name: Run firmware safety-gate tests
+        env:
+          ROUTER_PLATFORM_ROOT: ${{ github.workspace }}/router-platform
         run: python -m unittest discover -s tests -p 'test_*.py'
