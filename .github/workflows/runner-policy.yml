@@ -14,6 +14,6 @@ jobs:
   github-hosted-only:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Reject non-hosted runner labels
         run: '! rg -n -i "self[-_]hosted" .github/workflows'
