@@ -95,7 +95,7 @@ jobs:
           repository: kimiusolover/router-platform
           ref: 841a8af0445b1d1a46558ba1df8435d222e38cd4
           path: router-platform
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - name: Run firmware safety-gate tests
