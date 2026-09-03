@@ -17,12 +17,12 @@ jobs:
     # fetches PR Git objects, so a PR cannot weaken its own verifier.
     if: github.event_name == 'pull_request_target'
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           fetch-depth: 0
       - name: Check out the pinned trailer verifier
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: kimiusolover/routerctl
           ref: f6c6e56bdd2ad06fca8184e8f3a377bf926210a4
@@ -69,9 +69,9 @@ jobs:
     # jobs run from the PR workflow on the pull_request event below.
     if: github.event_name != 'pull_request_target'
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Check out pinned platform metadata
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: kimiusolover/router-platform
           ref: 841a8af0445b1d1a46558ba1df8435d222e38cd4
@@ -88,9 +88,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     if: github.event_name != 'pull_request_target'
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Check out pinned platform metadata
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: kimiusolover/router-platform
           ref: 841a8af0445b1d1a46558ba1df8435d222e38cd4
