@@ -5,7 +5,8 @@ import json
 import os
 from pathlib import Path
 import re
-import select
+import queue
+import threading
 import subprocess
 import sys
 import time
@@ -15,7 +16,21 @@ ROOT = Path(__file__).resolve().parents[2]
 WORK = ROOT/'build/qemu-bootstrap'
 
 class Serial:
-    def __init__(self, proc, logfile): self.proc, self.logfile, self.buffer = proc, logfile, b''
+    def __init__(self, proc, logfile):
+        self.proc, self.logfile, self.buffer = proc, logfile, b''
+        self.chunks = queue.Queue()
+        # Windows select() accepts sockets only, not subprocess pipes.
+        threading.Thread(target=self._read_output, daemon=True).start()
+
+    def _read_output(self):
+        try:
+            while True:
+                data = os.read(self.proc.stdout.fileno(), 65536)
+                self.chunks.put(data)
+                if not data:
+                    return
+        except OSError as error:
+            self.chunks.put(error)
     def send(self, text): self.proc.stdin.write((text+'\n').encode()); self.proc.stdin.flush()
     def expect(self, pattern, timeout=60):
         end = time.monotonic()+timeout
@@ -30,10 +45,14 @@ class Serial:
             if match:
                 self.buffer = self.buffer[match.end():]
                 return match
-            if select.select([self.proc.stdout], [], [], min(1, max(0,end-time.monotonic())))[0]:
-                data=os.read(self.proc.stdout.fileno(),65536)
-                if not data: raise RuntimeError('QEMU exited before expected serial output: '+repr(pattern))
-                self.logfile.write(data); self.logfile.flush(); self.buffer += data
+            try:
+                data = self.chunks.get(timeout=max(0, end-time.monotonic()))
+            except queue.Empty:
+                break
+            if isinstance(data, OSError):
+                raise RuntimeError('Cannot read QEMU serial output') from data
+            if not data: raise RuntimeError('QEMU exited before expected serial output: '+repr(pattern))
+            self.logfile.write(data); self.logfile.flush(); self.buffer += data
         raise TimeoutError('Expected serial output not seen: '+repr(pattern))
 
 def main():
