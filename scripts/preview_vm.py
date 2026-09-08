@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 
 DEVICE = 'x86_64-qemu-uefi-preview'
@@ -50,7 +51,10 @@ def fresh_storage(root, image, data, qemu_img, code, vars_template):
     session = Path(tempfile.mkdtemp(prefix=data['image_sha256'][:16]+'-', dir=parent))
     # A private base copy also prevents another build from changing this run's backing data.
     base = session/'base.img'
-    subprocess.run(['cp','--reflink=auto','--',str(image),str(base)],check=True)
+    if sys.platform.startswith('linux'):
+        subprocess.run(['cp','--reflink=auto','--',str(image),str(base)],check=True)
+    else:
+        shutil.copyfile(image, base)
     if sha256(base) != data['image_sha256']: raise ValueError('Base image changed during preparation')
     base.chmod(0o444)
     overlay = session/'disk.qcow2'
