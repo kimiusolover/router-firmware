@@ -31,7 +31,7 @@ class PreviewAccountsTests(unittest.TestCase):
                              'admin ALL=(ALL:ALL) ALL')
             unit = dest / 'etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service'
             # Git may materialize symlinks as text on Windows checkouts.
-            target = unit.read_text() if os.name == 'nt' and not unit.is_symlink() else str(unit.readlink())
+            target = unit.read_text() if os.name == 'nt' and not unit.is_symlink() else unit.readlink().as_posix()
             self.assertEqual(target, '/usr/lib/systemd/system/serial-getty@.service')
 
     def test_physical_overlay_has_no_preview_accounts(self):
