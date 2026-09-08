@@ -185,17 +185,29 @@ def build(device: str) -> None:
         subprocess.run([str(recipe)], cwd=ROOT, env=env, check=True)
 
 
-def rootfs(device: str) -> None:
-    build(device)
-    destination = build_dir(device) / "rootfs"
+def stage_rootfs(device: str, destination: Path) -> None:
+    """Compose files without executing target programs or changing host accounts."""
     shutil.rmtree(destination, ignore_errors=True)
     shutil.copytree(ROOT / "rootfs", destination, symlinks=True)
     overlay = ROOT / "overlays" / device
     if overlay.is_dir():
         shutil.copytree(overlay, destination, dirs_exist_ok=True, symlinks=True)
+    if device == "x86_64-qemu-uefi-preview":
+        # Git does not preserve these modes. Final image assembly must assign
+        # root ownership to /etc and uid/gid 1000 to /home/admin.
+        (destination / "etc/shadow").chmod(0o600)
+        (destination / "etc/sudoers").chmod(0o440)
+        (destination / "etc/sudoers.d/admin").chmod(0o440)
+        (destination / "home/admin").mkdir(parents=True, exist_ok=True)
+        (destination / "home/admin").chmod(0o700)
     etc = destination / "etc"
     etc.mkdir(exist_ok=True)
     (etc / "router-firmware-build.json").write_text(json.dumps({"device": device, "source_date_epoch": os.environ.get("SOURCE_DATE_EPOCH", "0")}, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def rootfs(device: str) -> None:
+    build(device)
+    stage_rootfs(device, build_dir(device) / "rootfs")
 
 
 def image(device: str) -> None:
@@ -223,27 +235,22 @@ def run_qemu(device: str, execute: bool = False) -> None:
     metadata_path = ROOT / "dist" / f"{image_name}.qemu.json"
     if not image_path.is_file() or image_path.is_symlink() or not metadata_path.is_file() or metadata_path.is_symlink():
         fail("QEMU preview image and its qemu metadata must be built before run-qemu")
+    from preview_vm import validate_image, fresh_storage
     try:
-        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as error:
-        fail(f"invalid QEMU preview metadata: {error}")
-    if metadata != {"device": device, "qemu_only": True, "uefi": True, "version": 1}:
-        fail("refusing QEMU run: preview metadata is missing required QEMU-only constraints")
-    qemu_img, qemu, ovmf_code = shutil.which("qemu-img"), shutil.which("qemu-system-x86_64"), os.environ.get("OVMF_CODE")
-    if not qemu_img or not qemu or not ovmf_code:
-        fail("QEMU, qemu-img, and OVMF_CODE are required; no VM was started")
-    ovmf_path = Path(ovmf_code).resolve()
-    if not ovmf_path.is_file():
-        fail("OVMF_CODE must name a readable OVMF firmware file")
-    overlay = build_dir(device) / "qemu" / f"{image_name}.qcow2"
-    overlay.parent.mkdir(parents=True, exist_ok=True)
-    if not overlay.exists():
-        subprocess.run([qemu_img, "create", "-f", "qcow2", "-F", "raw", "-b", str(image_path.resolve()), str(overlay)], cwd=ROOT, check=True)
+        image_path, metadata = validate_image(ROOT, image_name)
+        qemu_img, qemu = shutil.which("qemu-img"), shutil.which("qemu-system-x86_64")
+        if not qemu_img or not qemu or not os.environ.get("OVMF_CODE") or not os.environ.get("OVMF_VARS"):
+            fail("QEMU, qemu-img, OVMF_CODE and OVMF_VARS template are required")
+        session, overlay = fresh_storage(ROOT, image_path, metadata, qemu_img,
+            Path(os.environ["OVMF_CODE"]).resolve(), Path(os.environ["OVMF_VARS"]).resolve())
+        ovmf_path = session / "OVMF_CODE.fd"
+    except (ValueError, OSError) as error:
+        fail(str(error))
     # Milestone 0 is deliberately serial-only. e1000e is used instead of
     # virtio-net because it is the driver family required by the preview
     # kernel contract; the two interfaces are reserved for the later WAN/LAN
     # DHCP/DNS/firewall E2E milestone.
-    command = [qemu, "-machine", "q35", "-m", "1024", "-display", "none", "-serial", "stdio", "-drive", f"if=pflash,format=raw,readonly=on,file={ovmf_path}", "-drive", f"if=virtio,format=qcow2,file={overlay}", "-nic", "user,model=e1000e", "-nic", "user,model=e1000e"]
+    command = [qemu, "-machine", "q35", "-m", "1024", "-display", "none", "-serial", "stdio", "-drive", f"if=pflash,format=raw,readonly=on,file={ovmf_path}", "-drive", f"if=pflash,format=raw,file={session / 'OVMF_VARS.fd'}", "-drive", f"if=virtio,format=qcow2,file={overlay}", "-nic", "user,model=e1000e", "-nic", "user,model=e1000e"]
     if execute:
         subprocess.run(command, cwd=ROOT, check=True)
     else:

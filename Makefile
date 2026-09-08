@@ -6,6 +6,7 @@ QEMU_ARGS ?=
 
 help:
 	@printf '%s\n' 'Targets: fetch build rootfs image sample-image attest verify plan-storage plan-tiny run-qemu test clean' \
+	  'QEMU binary preview: qemu-bootstrap qemu-bootstrap-run qemu-bootstrap-test' \
 	  'Set DEVICE=<target> (default: ax23v-v1).'
 
 fetch build rootfs image attest verify plan-storage plan-tiny:
@@ -22,3 +23,16 @@ test:
 
 clean:
 	@rm -rf build
+
+# Explicitly authorized binary bootstrap; does not change source-image gates.
+.PHONY: qemu-bootstrap qemu-bootstrap-run qemu-bootstrap-test
+qemu-bootstrap:
+	@python3 scripts/preview/prepare.py
+	@unshare -Ur python3 scripts/preview/assemble.py --rebuild
+
+qemu-bootstrap-run:
+	@python3 scripts/preview/run.py $(QEMU_ARGS)
+
+qemu-bootstrap-test:
+	@python3 scripts/preview/boot_test.py --execute
+	@python3 scripts/preview/boot_test.py --execute --negative-loader
