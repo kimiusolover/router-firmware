@@ -44,11 +44,16 @@ def fresh_storage(root, image, data, qemu_img, code, vars_template):
     for path in (code, vars_template):
         if not path.is_file(): raise ValueError('Readable OVMF CODE and VARS template required')
         if ',' in str(path): raise ValueError('Comma in firmware path is not supported')
-    parent = root/'build'/DEVICE/'qemu'
-    parent.mkdir(parents=True, exist_ok=True)
+    digest = data['image_sha256']
+    if not isinstance(digest, str) or len(digest) != 64 or any(c not in '0123456789abcdef' for c in digest):
+        raise ValueError('Invalid digest: image_sha256')
+    parent = root/'build'/DEVICE/'qemu'/digest
     if not parent.resolve().is_relative_to((root/'build').resolve()):
         raise ValueError('QEMU run directory must remain inside build/')
-    session = Path(tempfile.mkdtemp(prefix=data['image_sha256'][:16]+'-', dir=parent))
+    parent.mkdir(parents=True, exist_ok=True)
+    # Full image identity selects the namespace; even the same image gets fresh
+    # guest state. Never reuse or remove an older (possibly running) session.
+    session = Path(tempfile.mkdtemp(prefix='run-', dir=parent))
     # A private base copy also prevents another build from changing this run's backing data.
     base = session/'base.img'
     if sys.platform.startswith('linux'):

@@ -89,9 +89,13 @@ binary package lock digest. Legacy v1 metadata is rejected. Each launch creates
 a fresh run directory, private base copy (verified after copying), qcow2 overlay,
 read-only OVMF CODE copy, and writable disposable OVMF VARS copy. This prevents
 stale overlay reuse and concurrent base rebuilds from changing the running VM.
+The full `image_sha256` selects the storage directory: changing the image creates
+a new overlay under a different hash. Even an unchanged image gets a fresh
+`run-<unique>` session. Older sessions (including legacy directories) are never
+reused or deleted automatically, so a running VM keeps its private backing image.
 The Milestone 0 launcher disables NICs and the QEMU monitor.
 
-`build/.../qemu/<hash>-<unique>/evidence.json` records pass/fail, actual launch
+`build/.../qemu/<image_sha256>/run-<unique>/evidence.json` records pass/fail, actual launch
 arguments, QEMU version, firmware hashes, image identity, checks, and serial log
 SHA-256. `source_lock_commit` is explicitly null because these are upstream
 binary packages; the package lock digest identifies the actual inputs. The
