@@ -53,3 +53,40 @@ class PreviewVMTests(unittest.TestCase):
         (first/'OVMF_VARS.fd').write_bytes(b'guest mutation')
         self.assertEqual(vars_template.read_bytes(),b'vars')
         self.assertEqual((second/'OVMF_VARS.fd').read_bytes(),b'vars')
+
+    def test_changed_image_selects_new_hash_and_preserves_old_session(self):
+        code=self.root/'code'; code.write_bytes(b'code')
+        vars_template=self.root/'vars'; vars_template.write_bytes(b'vars')
+        def create_overlay(command, **kwargs):
+            Path(command[-1]).write_bytes(b'fresh overlay')
+        with patch.object(vm.sys,'platform','win32'), patch.object(vm.subprocess,'run',side_effect=create_overlay) as create:
+            first,old_overlay=vm.fresh_storage(self.root,self.image,self.metadata,'qemu-img',code,vars_template)
+            old_overlay.write_bytes(b'guest changes')
+            self.image.write_bytes(b'changed base')
+            self.metadata['image_sha256']=vm.sha256(self.image)
+            self.save()
+            image,metadata=vm.validate_image(self.root,'test.img')
+            second,new_overlay=vm.fresh_storage(self.root,image,metadata,'qemu-img',code,vars_template)
+        self.assertNotEqual(first.parent,second.parent)
+        self.assertEqual(second.parent.name,metadata['image_sha256'])
+        self.assertEqual(create.call_count,2)
+        self.assertEqual(new_overlay.read_bytes(),b'fresh overlay')
+        self.assertEqual(old_overlay.read_bytes(),b'guest changes')
+        self.assertEqual((first/'base.img').read_bytes(),b'current base')
+        self.assertEqual((second/'base.img').read_bytes(),b'changed base')
+
+    def test_base_changed_after_validation_does_not_create_overlay(self):
+        code=self.root/'code'; code.write_bytes(b'code')
+        vars_template=self.root/'vars'; vars_template.write_bytes(b'vars')
+        self.image.write_bytes(b'changed base')
+        with patch.object(vm.sys,'platform','win32'), patch.object(vm.subprocess,'run') as create:
+            with self.assertRaisesRegex(ValueError,'Base image changed'):
+                vm.fresh_storage(self.root,self.image,self.metadata,'qemu-img',code,vars_template)
+        create.assert_not_called()
+
+    def test_invalid_storage_digest_rejected(self):
+        code=self.root/'code'; code.write_bytes(b'code')
+        for digest in ('../escape', 'a'*63, 'G'*64, None):
+            with self.subTest(digest=digest), self.assertRaisesRegex(ValueError,'Invalid digest'):
+                vm.fresh_storage(self.root,self.image,dict(self.metadata,image_sha256=digest),'qemu-img',code,code)
+        self.assertFalse((self.root/'build').exists())
