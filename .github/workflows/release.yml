@@ -1,47 +1,85 @@
 name: Release firmware
 
 on:
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: Release tag to publish
-        required: true
-        type: string
+  push:
+    tags: ['v*']
 
 permissions:
   contents: write
+  id-token: write
 
 jobs:
   release:
-    name: release
     runs-on: ubuntu-latest
+    env:
+      # The fixture contains no timestamps other than this value. A fixed epoch
+      # makes the released binary independently reproducible.
+      SOURCE_DATE_EPOCH: "0"
+      ROUTERCTL_VERIFIER_COMMIT: "e02171e03891f2a1e65442d27e2163826fc2587d"
     steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ inputs.tag }}
-          fetch-depth: 0
-      - name: Check out pinned router-platform helpers
-        uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check out pinned platform metadata
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: kimiusolover/router-platform
           ref: 841a8af0445b1d1a46558ba1df8435d222e38cd4
           path: router-platform
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.12"
+      - name: Verify discovery target metadata
+        env:
+          ROUTER_PLATFORM_ROOT: ${{ github.workspace }}/router-platform
+        run: make verify DEVICE=ax23v-v1
+      - name: Build deterministic release fixture
+        env:
+          ROUTER_PLATFORM_ROOT: ${{ github.workspace }}/router-platform
+        run: |
+          make sample-image DEVICE=ax23v-v1
+          make attest DEVICE=ax23v-v1
       - name: Check out routerctl release verifier
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: kimiusolover/routerctl
           ref: e02171e03891f2a1e65442d27e2163826fc2587d
           path: routerctl
-          fetch-depth: 1
-      - uses: actions/setup-go@v7
+      - name: Set up the pinned verifier Go toolchain
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: routerctl/go.mod
           cache-dependency-path: routerctl/go.sum
-      - name: Verify release artifacts
+      - name: Verify release metadata agreement
         run: |
           go run ./routerctl/cmd/routerctl verify-release \
-            --repo . \
-            --tag "${{ inputs.tag }}"
+            dist/ax23v-v1.manifest.json dist/SHA256SUMS dist/provenance.json
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Keylessly sign release artifact, manifest, and SBOM
+        run: |
+          for subject in \
+            dist/ax23v-v1.bin \
+            dist/ax23v-v1.manifest.json \
+            dist/ax23v-v1.sbom.cdx.json; do
+            cosign sign-blob --yes \
+              --bundle "$subject.bundle" \
+              --output-signature "$subject.sig" \
+              "$subject"
+          done
+      - name: Publish release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" \
+              dist/ax23v-v1.bin dist/ax23v-v1.manifest.json \
+              dist/ax23v-v1.sbom.cdx.json dist/SHA256SUMS dist/provenance.json \
+              dist/ax23v-v1.bin.sig dist/ax23v-v1.bin.bundle \
+              dist/ax23v-v1.manifest.json.sig dist/ax23v-v1.manifest.json.bundle \
+              dist/ax23v-v1.sbom.cdx.json.sig dist/ax23v-v1.sbom.cdx.json.bundle --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              dist/ax23v-v1.bin dist/ax23v-v1.manifest.json \
+              dist/ax23v-v1.sbom.cdx.json dist/SHA256SUMS dist/provenance.json \
+              dist/ax23v-v1.bin.sig dist/ax23v-v1.bin.bundle \
+              dist/ax23v-v1.manifest.json.sig dist/ax23v-v1.manifest.json.bundle \
+              dist/ax23v-v1.sbom.cdx.json.sig dist/ax23v-v1.sbom.cdx.json.bundle \
+              --title "$GITHUB_REF_NAME" \
+              --notes "AX23V v1 reproducible, unflashable integration fixture. Do not flash this asset."
+          fi
