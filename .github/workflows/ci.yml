@@ -25,7 +25,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: kimiusolover/routerctl
-          ref: f6c6e56bdd2ad06fca8184e8f3a377bf926210a4
+          ref: e02171e03891f2a1e65442d27e2163826fc2587d
           path: routerctl
           fetch-depth: 1
       - uses: actions/setup-go@v7

@@ -15,7 +15,7 @@ jobs:
       # The fixture contains no timestamps other than this value. A fixed epoch
       # makes the released binary independently reproducible.
       SOURCE_DATE_EPOCH: "0"
-      ROUTERCTL_VERIFIER_COMMIT: "2288cd8a559bca2b10e13251570cccd22383f9a2"
+      ROUTERCTL_VERIFIER_COMMIT: "e02171e03891f2a1e65442d27e2163826fc2587d"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Check out pinned platform metadata
@@ -38,7 +38,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: kimiusolover/routerctl
-          ref: 2288cd8a559bca2b10e13251570cccd22383f9a2
+          ref: e02171e03891f2a1e65442d27e2163826fc2587d
           path: routerctl
       - name: Set up the pinned verifier Go toolchain
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
