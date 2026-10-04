@@ -1,7 +1,7 @@
 name: router-packages
 status: locked
 upstream: https://github.com/kimiusolover/router-packages
-revision: f7a2f84
-sha256: 883adb1c485150de9e3f847e884a0c12a31688b87168a1930ba36c73e0f633e3
+revision: 9e630bf997db6b7e4ce375675a8e482595c42129
+sha256: 6d47da4d256fc27164f9febeadb9778ff0714bae44e4c336f0024c19953bf2b7
 license: internal
-archive: https://github.com/kimiusolover/router-packages/archive/f7a2f84.tar.gz
+archive: https://github.com/kimiusolover/router-packages/archive/9e630bf997db6b7e4ce375675a8e482595c42129.tar.gz
