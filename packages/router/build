@@ -1,4 +1,47 @@
 #!/usr/bin/env bash
 set -euo pipefail
-echo 'router: build recipe blocked until the base rootfs and service policy are locked' >&2
-exit 1
+
+: "${BUILD_DIR:?BUILD_DIR is required}"
+: "${DEVICE:?DEVICE is required}"
+: "${ROUTER_PACKAGES_ROOT:?ROUTER_PACKAGES_ROOT is required}"
+: "${ROUTER_PACKAGES_REVISION:?ROUTER_PACKAGES_REVISION is required}"
+
+ROOTFS="${BUILD_DIR}/package-rootfs"
+PACKAGE_BUILD="${BUILD_DIR}/router-package-build"
+
+rm -rf "$ROOTFS" "$PACKAGE_BUILD"
+mkdir -p "$ROOTFS" "$PACKAGE_BUILD"
+
+build_component() {
+    local component="$1"
+    local source_root="${ROUTER_PACKAGES_ROOT}/network/${component}/files"
+    local recipe="${ROUTER_PACKAGES_ROOT}/network/${component}/recipe"
+    local component_build="${PACKAGE_BUILD}/${component}"
+
+    test -d "$source_root" || {
+        echo "router: missing component source: $source_root" >&2
+        exit 1
+    }
+
+    test -f "$recipe" || {
+        echo "router: missing component recipe: $recipe" >&2
+        exit 1
+    }
+
+    mkdir -p "$component_build"
+
+    echo "router: building ${component} @ ${ROUTER_PACKAGES_REVISION}"
+
+    # Recipes are shell fragments that define build(); source them and invoke.
+    # shellcheck source=/dev/null
+    SOURCE_ROOT="$source_root" \
+    BUILD_DIR="$component_build" \
+    DESTDIR="$ROOTFS" \
+    ROUTER_PACKAGES_REVISION="$ROUTER_PACKAGES_REVISION" \
+        bash -c 'source "$1" && build' _ "$recipe"
+}
+
+build_component router-nic-discovery
+build_component router-network
+build_component router-prefix
+build_component router-ipv6-nat
