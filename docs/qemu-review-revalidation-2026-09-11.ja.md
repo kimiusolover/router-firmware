@@ -1,5 +1,7 @@
 # QEMU Milestone 0 レビュー残件と再検証（2026-09-11）
 
+[English translation](qemu-review-revalidation-2026-09-11.en.md)
+
 対象：[Issue #22 の設計レビュー](https://github.com/kimiusolover/router-firmware/issues/22#issuecomment-5574759446)。
 検証対象コミット：`6f129d41408896ccef8ff0bcb2587823371678dc`。
 試験開始時の作業ツリーはクリーン。完全SHAによるセッション保存先分離は、このコミットに含まれる。
