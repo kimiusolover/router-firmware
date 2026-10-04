@@ -45,3 +45,4 @@ build_component router-nic-discovery
 build_component router-network
 build_component router-prefix
 build_component router-ipv6-nat
+build_component router-dslite
