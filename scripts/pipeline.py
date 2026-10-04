@@ -173,12 +173,44 @@ def fetch(device: str) -> None:
             fail(f"checksum mismatch for {source['name']}")
 
 
+def extract_router_packages(device: str) -> tuple[Path, str]:
+    """Extract the locked internal router-packages archive for recipe use."""
+    source = next(
+        values for _, values in source_locks(strict=True)
+        if values["name"] == "router-packages"
+    )
+    archive = build_dir(device) / "downloads" / f"router-packages-{source['revision']}.source"
+    package_root = build_dir(device) / "package-sources" / "router-packages"
+    shutil.rmtree(package_root, ignore_errors=True)
+    package_root.parent.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(archive, mode="r:*") as bundle:
+        members = bundle.getmembers()
+        if not members:
+            fail("router-packages archive is empty")
+        roots = {member.name.split("/", 1)[0] for member in members if member.name}
+        if len(roots) != 1:
+            fail("router-packages archive must contain exactly one top-level directory")
+        bundle.extractall(package_root.parent, filter="data")
+    extracted = package_root.parent / next(iter(roots))
+    if extracted != package_root:
+        extracted.rename(package_root)
+    return package_root, source["revision"]
+
+
 def build(device: str) -> None:
     fetch(device)
     recipes = sorted((ROOT / "packages").glob("*/build"))
     if not recipes:
         fail("no package build recipes found; add packages/<group>/build")
-    env = {"PATH": os.environ["PATH"], "SOURCE_DATE_EPOCH": os.environ.get("SOURCE_DATE_EPOCH", "0"), "BUILD_DIR": str(build_dir(device)), "DEVICE": device}
+    env = {
+        "PATH": os.environ["PATH"],
+        "SOURCE_DATE_EPOCH": os.environ.get("SOURCE_DATE_EPOCH", "0"),
+        "BUILD_DIR": str(build_dir(device)),
+        "DEVICE": device,
+    }
+    router_packages_root, router_packages_revision = extract_router_packages(device)
+    env["ROUTER_PACKAGES_ROOT"] = str(router_packages_root)
+    env["ROUTER_PACKAGES_REVISION"] = router_packages_revision
     for recipe in recipes:
         if not os.access(recipe, os.X_OK):
             fail(f"build recipe is not executable: {recipe}")
@@ -192,6 +224,9 @@ def stage_rootfs(device: str, destination: Path) -> None:
     overlay = ROOT / "overlays" / device
     if overlay.is_dir():
         shutil.copytree(overlay, destination, dirs_exist_ok=True, symlinks=True)
+    package_rootfs = build_dir(device) / "package-rootfs"
+    if package_rootfs.is_dir():
+        shutil.copytree(package_rootfs, destination, dirs_exist_ok=True, symlinks=True)
     if device == "x86_64-qemu-uefi-preview":
         # Git does not preserve these modes. Final image assembly must assign
         # root ownership to /etc and uid/gid 1000 to /home/admin.
