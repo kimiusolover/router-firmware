@@ -185,3 +185,46 @@ EFI ローダー欠落テストでは、ログイン可能な状態に到達し�
 この検証は Arch バイナリを使用した QEMU UEFI bootstrap の起動・認証・終了、および EFI ローダー欠落時の負のテストを対象とする。OpenWrt 25.12.5 の実ランタイムや RouterOS 固有のネットワーク機能の動作を検証したものではない。
 
 証跡の `firmware_checkout` は Git コミット `e818aeb644e5d19c71935633d51c7d9a9148f2b4` を示す。`scripts/preview/assemble.py` には未コミット変更があったため、コミットの識別情報だけではビルドに取り込まれた全ソース変更を特定できない。
+
+
+## initramfs の `/run`・`/tmp` 作成修正後の再検証
+
+検証日: 2026-10-06
+
+### 変更内容
+
+コミット `fdfa8236632639d63e2fc01025ebdea7e09d2dba` で、`scripts/preview/assemble.py` の initramfs 初期ディレクトリ作成対象に `run` と `tmp` を追加した。
+
+### 検証環境
+
+* Target: `x86_64-qemu-uefi-preview`
+* Boot mode: UEFI
+* Test environment: QEMU only
+* Provenance: `arch-binary-bootstrap`
+* Package lock SHA-256: `ef0ab7593736e31f53297b462ce90f34860cd82468ce75ae254663e609b73b28`
+* Base unchanged: `true`
+
+### 検証結果
+
+通常起動テスト: **passed**
+
+* Image SHA-256: `4408fc2a23ef2ed4197e1ad765836f9082fca6a2021e1cedf05fe43fd6023407`
+* Serial SHA-256: `11c2bde7e626f6d41bb3d8af231a75b252d3926427826bde32c8f21b3059fc71`
+* Evidence: `build/x86_64-qemu-uefi-preview/qemu/4408fc2a23ef2ed4197e1ad765836f9082fca6a2021e1cedf05fe43fd6023407/run-m8ay4p3w/evidence.json`
+* Checks: `cold_boot_login_prompt`, `admin_password_login_uid_1000`, `sudo_wrong_password_rejected`, `sudo_correct_password_uid_0`, `target_sudoers_valid`, `root_password_login_rejected`, `guest_poweroff`
+
+EFI ローダー欠落時の異常系テスト: **passed**
+
+* Image SHA-256: `b5ae5494e36f1a9f240dec481de97231871ef370ea6f709351063649a519c975`
+* Serial SHA-256: `dd43538d51cee3ec448878e80c4dfa248f442329b0a4dfcfdd3a7c3f206b9670`
+* Evidence: `build/x86_64-qemu-uefi-preview/qemu/b5ae5494e36f1a9f240dec481de97231871ef370ea6f709351063649a519c975/run-d2gsx7wc/evidence.json`
+* Check: `missing_loader_does_not_reach_login`
+
+両テストの `firmware_checkout` は `fdfa8236632639d63e2fc01025ebdea7e09d2dba` で一致した。
+
+### 判定と制限事項
+
+今回の QEMU UEFI プレビュー環境では、通常起動と EFI ローダー欠落時の異常系テストがともに成功した。
+
+この結果は QEMU 上の検証結果であり、実機の全デバイスでの動作を保証するものではない。`systemd-imds-generator` の終了コード 1 と `libbpf` 不在の警告は、別途評価する。
+
