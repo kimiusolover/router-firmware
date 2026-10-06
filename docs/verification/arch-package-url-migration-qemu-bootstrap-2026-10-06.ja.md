@@ -100,3 +100,130 @@ QEMU bootstrap testでは複数の evidence.json が生成され、qemu-bootstra
 Ubuntu 24.04環境ではQEMU実行時のGLIBC_2.42/GLIBC_2.43要求により実行できなかったが、Arch Linux環境では同じコミット上でQEMU bootstrap testを正常完了できることを確認した。
 
 今回の検証により、Arch package Archive URL変更後のpackage cache検証、preview image生成、およびQEMU bootstrap testまでの一連の処理がArch Linux環境で正常に完了することを確認した。
+
+## 追加検証結果（2026-10-06、main / e818aeb）
+
+### 実行環境
+
+- OS: Arch Linux
+- Branch: `main`
+- Firmware checkout: `e818aeb644e5d19c71935633d51c7d9a9148f2b4`
+- Command: `make qemu-bootstrap-test`
+- Exit status: `0`
+
+### 結果
+
+`make qemu-bootstrap-test` は終了コード `0` で完了した。
+
+今回の実行ログに対応する証跡は以下の2件。
+
+| 項目 | 通常起動テスト | EFIローダー欠落テスト |
+|---|---|---|
+| Result | `passed` | `passed` |
+| `negative_loader` | `false` | `true` |
+| Image SHA256 | `d3d3b309fb25f0b3f0330fed74c8d16890181d8eb2c6982dc7e00953e88860d9` | `0850fddb088dc1388372af662577967bb4fa61af298fb4725e6ed09783c54fd4` |
+| `base_unchanged` | `true` | `true` |
+
+通常起動テストでは、コールドブート、adminログインとUID、sudoの誤パスワード拒否・正しいパスワードでのroot権限取得、sudoers検証、rootパスワードログイン拒否、ゲストからの電源断を確認した。
+
+EFIローダー欠落テストでは、ログイン画面に到達しないことを確認した。
+
+両方の証跡で `provenance_kind=arch-binary-bootstrap`、`qemu_only=true`、`uefi=true` が記録されている。
+
+### 証跡の場所
+
+- 通常起動:
+  `build/x86_64-qemu-uefi-preview/qemu/d3d3b309fb25f0b3f0330fed74c8d16890181d8eb2c6982dc7e00953e88860d9/run-f9uthvfx/evidence.json`
+- EFIローダー欠落:
+  `build/x86_64-qemu-uefi-preview/qemu/0850fddb088dc1388372af662577967bb4fa61af298fb4725e6ed09783c54fd4/run-0tghd1xm/evidence.json`
+
+### 検証範囲と制限
+
+今回確認したのは、Arch バイナリを使用した QEMU UEFI bootstrap の起動・認証・終了、および EFI ローダー欠落時の負のテストである。
+
+この結果は、OpenWrt 25.12.5 の実ランタイムや、RouterOS 固有のネットワーク機能の動作を検証したものではない。
+
+なお、検証ディレクトリには過去の実行で生成された証跡も存在する。上記2件を今回の実行分として記録し、過去分とは区別する。
+
+## 追加検証結果（2026-10-06、main / e818aeb、initramfs run/tmp 追加後）
+
+### 実行環境
+
+- OS: Arch Linux
+- Branch: `main`
+- Firmware checkout: `e818aeb644e5d19c71935633d51c7d9a9148f2b4`
+- Command: `make qemu-bootstrap-test`
+- Exit status: `0`
+- `package_lock_sha256`: `ef0ab7593736e31f53297b462ce90f34860cd82468ce75ae254663e609b73b28`
+
+### 結果
+
+通常ブートテストおよび EFI ローダー欠落テストは、いずれも `passed` となった。
+
+| 項目 | 通常ブート | EFI ローダー欠落 |
+|---|---|---|
+| Result | `passed` | `passed` |
+| `negative_loader` | `false` | `true` |
+| Image SHA-256 | `d02501f2df741c7457e50add7aee04a563a4b5ee77ff06faf2029cdf36bde008` | `3fd4f2dcfeab6cdc7333f391bfd7b1a3cc6dd676439dca0a23b46f242002d75e` |
+| `base_unchanged` | `true` | `true` |
+
+通常ブートでは、ログイン、認証、sudo 権限、sudoers 検証、root パスワードログイン拒否、およびゲストの正常終了を確認した。
+
+EFI ローダー欠落テストでは、ログイン可能な状態に到達しないことを確認した。
+
+両方の証跡で `provenance_kind=arch-binary-bootstrap`、`qemu_only=true`、`uefi=true` が記録されている。
+
+通常ブートおよび EFI ローダー欠落テストのシリアルログに対して `switch_root`、`failed to mount moving /run`、`forcing unmount of /run` を検索したが、該当箇所は検出されなかった。
+
+### 証跡の場所
+
+- 通常ブート: `build/x86_64-qemu-uefi-preview/qemu/d02501f2df741c7457e50add7aee04a563a4b5ee77ff06faf2029cdf36bde008/run-iab5wgvy/evidence.json`
+- EFI ローダー欠落: `build/x86_64-qemu-uefi-preview/qemu/3fd4f2dcfeab6cdc7333f391bfd7b1a3cc6dd676439dca0a23b46f242002d75e/run-0tlgvw3z/evidence.json`
+
+### 検証範囲と制限
+
+この検証は Arch バイナリを使用した QEMU UEFI bootstrap の起動・認証・終了、および EFI ローダー欠落時の負のテストを対象とする。OpenWrt 25.12.5 の実ランタイムや RouterOS 固有のネットワーク機能の動作を検証したものではない。
+
+証跡の `firmware_checkout` は Git コミット `e818aeb644e5d19c71935633d51c7d9a9148f2b4` を示す。`scripts/preview/assemble.py` には未コミット変更があったため、コミットの識別情報だけではビルドに取り込まれた全ソース変更を特定できない。
+
+
+## initramfs の `/run`・`/tmp` 作成修正後の再検証
+
+検証日: 2026-10-06
+
+### 変更内容
+
+コミット `fdfa8236632639d63e2fc01025ebdea7e09d2dba` で、`scripts/preview/assemble.py` の initramfs 初期ディレクトリ作成対象に `run` と `tmp` を追加した。
+
+### 検証環境
+
+* Target: `x86_64-qemu-uefi-preview`
+* Boot mode: UEFI
+* Test environment: QEMU only
+* Provenance: `arch-binary-bootstrap`
+* Package lock SHA-256: `ef0ab7593736e31f53297b462ce90f34860cd82468ce75ae254663e609b73b28`
+* Base unchanged: `true`
+
+### 検証結果
+
+通常起動テスト: **passed**
+
+* Image SHA-256: `4408fc2a23ef2ed4197e1ad765836f9082fca6a2021e1cedf05fe43fd6023407`
+* Serial SHA-256: `11c2bde7e626f6d41bb3d8af231a75b252d3926427826bde32c8f21b3059fc71`
+* Evidence: `build/x86_64-qemu-uefi-preview/qemu/4408fc2a23ef2ed4197e1ad765836f9082fca6a2021e1cedf05fe43fd6023407/run-m8ay4p3w/evidence.json`
+* Checks: `cold_boot_login_prompt`, `admin_password_login_uid_1000`, `sudo_wrong_password_rejected`, `sudo_correct_password_uid_0`, `target_sudoers_valid`, `root_password_login_rejected`, `guest_poweroff`
+
+EFI ローダー欠落時の異常系テスト: **passed**
+
+* Image SHA-256: `b5ae5494e36f1a9f240dec481de97231871ef370ea6f709351063649a519c975`
+* Serial SHA-256: `dd43538d51cee3ec448878e80c4dfa248f442329b0a4dfcfdd3a7c3f206b9670`
+* Evidence: `build/x86_64-qemu-uefi-preview/qemu/b5ae5494e36f1a9f240dec481de97231871ef370ea6f709351063649a519c975/run-d2gsx7wc/evidence.json`
+* Check: `missing_loader_does_not_reach_login`
+
+両テストの `firmware_checkout` は `fdfa8236632639d63e2fc01025ebdea7e09d2dba` で一致した。
+
+### 判定と制限事項
+
+今回の QEMU UEFI プレビュー環境では、通常起動と EFI ローダー欠落時の異常系テストがともに成功した。
+
+この結果は QEMU 上の検証結果であり、実機の全デバイスでの動作を保証するものではない。`systemd-imds-generator` の終了コード 1 と `libbpf` 不在の警告は、別途評価する。
