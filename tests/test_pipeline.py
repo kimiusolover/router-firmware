@@ -179,18 +179,33 @@ class PipelineUnitTests(unittest.TestCase):
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
 
-        # 9. Unsafe archive members are rejected
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            tmp_path = Path(tmp_dir)
-            tar_path = tmp_path / "bad.tar.gz"
+        # Test cases for archive safety
+        test_cases = [
+            ("../outside.txt", tarfile.REGTYPE, None, "unsafe archive member path"),
+            ("/abs/path.txt", tarfile.REGTYPE, None, "unsafe archive member path"),
+            ("pkg/symlink", tarfile.SYMTYPE, "../../outside.txt", "unsafe archive link target"),
+            ("pkg/fifo", tarfile.FIFOTYPE, None, "unsafe archive member type"),
+        ]
 
-            with tarfile.open(tar_path, "w:gz") as tar:
-                ti = tarfile.TarInfo(name="../outside.txt")
-                ti.size = 4
-                tar.addfile(ti, io.BytesIO(b"data"))
+        for member_name, type_flag, linkname, expected_err in test_cases:
+            with self.subTest(member_name=member_name):
+                with tempfile.TemporaryDirectory() as tmp_dir:
+                    tmp_path = Path(tmp_dir)
+                    tar_path = tmp_path / "bad.tar.gz"
 
-            with unittest.mock.patch.object(mod, "target_required_sources", return_value=[(Path("src.yaml"), {"name": "router-packages", "revision": "123"})]):
-                with unittest.mock.patch.object(mod, "fetch_source_archive", return_value=tar_path):
-                    with unittest.mock.patch.object(mod, "build_dir", return_value=tmp_path):
-                        with self.assertRaisesRegex(RuntimeError, "unsafe archive member path"):
-                            mod.extract_router_packages("x86_64-qemu-uefi-preview")
+                    with tarfile.open(tar_path, "w:gz") as tar:
+                        ti = tarfile.TarInfo(name=member_name)
+                        ti.type = type_flag
+                        if linkname:
+                            ti.linkname = linkname
+                        if type_flag == tarfile.REGTYPE:
+                            ti.size = 4
+                            tar.addfile(ti, io.BytesIO(b"data"))
+                        else:
+                            tar.addfile(ti)
+
+                    with unittest.mock.patch.object(mod, "target_required_sources", return_value=[(Path("src.yaml"), {"name": "router-packages", "revision": "123"})]):
+                        with unittest.mock.patch.object(mod, "fetch_source_archive", return_value=tar_path):
+                            with unittest.mock.patch.object(mod, "build_dir", return_value=tmp_path):
+                                with self.assertRaisesRegex(RuntimeError, expected_err):
+                                    mod.extract_router_packages("x86_64-qemu-uefi-preview")

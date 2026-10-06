@@ -236,7 +236,8 @@ def fetch_source_archive(downloads: Path, source: dict[str, str]) -> Path:
     expected_sha = source["sha256"]
 
     if destination.is_file():
-        digest = hashlib.file_digest(destination.open("rb"), "sha256").hexdigest()
+        with destination.open("rb") as stream:
+            digest = hashlib.file_digest(stream, "sha256").hexdigest()
         if digest == expected_sha:
             return destination
         destination.unlink(missing_ok=True)
@@ -248,7 +249,8 @@ def fetch_source_archive(downloads: Path, source: dict[str, str]) -> Path:
     try:
         with urllib.request.urlopen(source["archive"]) as response, tmp_file.open("wb") as output:
             shutil.copyfileobj(response, output)
-        digest = hashlib.file_digest(tmp_file.open("rb"), "sha256").hexdigest()
+        with tmp_file.open("rb") as stream:
+            digest = hashlib.file_digest(stream, "sha256").hexdigest()
         if digest != expected_sha:
             fail(f"checksum mismatch for {source['name']}")
         tmp_file.replace(destination)
@@ -287,26 +289,50 @@ def extract_router_packages(device: str) -> tuple[Path, str]:
         if not members:
             fail("router-packages archive is empty")
 
-        # Path safety checks
         dest_parent = package_root.parent.resolve()
         for member in members:
-            if not member.name or member.name.startswith("/") or ".." in Path(member.name).parts:
+            if not member.name or member.name.startswith("/") or member.name.startswith("\\"):
                 fail(f"unsafe archive member path: {member.name}")
+            if ".." in Path(member.name).parts:
+                fail(f"unsafe archive member path: {member.name}")
+
+            member_dest = (dest_parent / member.name).resolve()
+            try:
+                member_dest.relative_to(dest_parent)
+            except ValueError:
+                fail(f"unsafe archive member path: {member.name}")
+
             if member.issym() or member.islnk():
-                target_path = (dest_parent / member.linkname).resolve() if not member.linkname.startswith("/") else Path(member.linkname).resolve()
+                if not member.linkname or member.linkname.startswith("/") or member.linkname.startswith("\\"):
+                    fail(f"unsafe archive link target: {member.linkname}")
+                member_dir = member_dest.parent
+                target_path = (member_dir / member.linkname).resolve()
                 try:
                     target_path.relative_to(dest_parent)
                 except ValueError:
                     fail(f"unsafe archive link target: {member.linkname}")
+            elif not (member.isfile() or member.isdir()):
+                fail(f"unsafe archive member type for {member.name}")
 
         roots = {member.name.split("/", 1)[0] for member in members if member.name}
         if len(roots) != 1:
             fail("router-packages archive must contain exactly one top-level directory")
-        bundle.extractall(package_root.parent, filter="data")
 
-    extracted = package_root.parent / next(iter(roots))
-    if extracted != package_root:
-        extracted.rename(package_root)
+        extracted_root = package_root.parent / next(iter(roots))
+        shutil.rmtree(extracted_root, ignore_errors=True)
+        try:
+            bundle.extractall(package_root.parent, filter="data")
+            if not extracted_root.is_dir():
+                fail(f"extraction failed to produce expected directory {extracted_root}")
+            if extracted_root != package_root:
+                if package_root.exists():
+                    shutil.rmtree(package_root, ignore_errors=True)
+                extracted_root.rename(package_root)
+        except Exception:
+            shutil.rmtree(extracted_root, ignore_errors=True)
+            shutil.rmtree(package_root, ignore_errors=True)
+            raise
+
     return package_root, source["revision"]
 
 
@@ -640,20 +666,26 @@ def attest(device: str) -> None:
     image_format = "router-firmware-unflashable-fixture" if fixture else definition.get("format", "")
     if image_format not in ARTIFACT_FORMATS:
         fail(f"unsupported artifact format: {image_format or 'unset'}")
-    entries: list[dict[str, object]] = [{
-        "name": p.name,
-        "sha256": hashlib.file_digest(p.open("rb"), "sha256").hexdigest(),
-        "size": p.stat().st_size,
-        "format": image_format,
-    } for p in artifacts]
+    entries: list[dict[str, object]] = []
+    for p in artifacts:
+        with p.open("rb") as stream:
+            digest = hashlib.file_digest(stream, "sha256").hexdigest()
+        entries.append({
+            "name": p.name,
+            "sha256": digest,
+            "size": p.stat().st_size,
+            "format": image_format,
+        })
     if not fixture:
         target_required_sources(device, strict=True)
     stamp = os.environ.get("SOURCE_DATE_EPOCH")
     created = datetime.fromtimestamp(int(stamp), timezone.utc).isoformat().replace("+00:00", "Z") if stamp else datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     sbom = write_sbom(device, fixture, entries, created)
+    with sbom.open("rb") as stream:
+        sbom_digest = hashlib.file_digest(stream, "sha256").hexdigest()
     entries.append({
         "name": sbom.name,
-        "sha256": hashlib.file_digest(sbom.open("rb"), "sha256").hexdigest(),
+        "sha256": sbom_digest,
         "size": sbom.stat().st_size,
         "format": "cyclonedx-1.5-json",
     })
