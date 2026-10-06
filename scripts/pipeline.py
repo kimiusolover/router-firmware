@@ -365,13 +365,33 @@ def extract_router_packages(device: str) -> tuple[Path, str]:
             if not extracted_dir.is_dir():
                 fail(f"extraction failed to produce expected directory {extracted_dir}")
 
+            backup_dir = None
             if package_root.exists() or package_root.is_symlink():
-                if package_root.is_symlink() or not package_root.is_dir():
-                    package_root.unlink(missing_ok=True)
-                else:
-                    shutil.rmtree(package_root)
+                backup_dir = package_sources_dir / f".backup-router-packages-{uuid.uuid4().hex}"
+                try:
+                    package_root.rename(backup_dir)
+                except Exception as backup_err:
+                    fail(f"failed to back up existing package_root ({package_root} -> {backup_dir}): {backup_err}")
 
-            extracted_dir.rename(package_root)
+            try:
+                extracted_dir.rename(package_root)
+            except Exception as publish_err:
+                if backup_dir and backup_dir.exists():
+                    try:
+                        backup_dir.rename(package_root)
+                    except Exception as rollback_err:
+                        fail(
+                            f"failed to publish new package_root ({extracted_dir} -> {package_root}): {publish_err}; "
+                            f"ROLLBACK FAILED ({backup_dir} -> {package_root}): {rollback_err}. "
+                            f"Existing backup retained at {backup_dir}"
+                        )
+                fail(f"failed to publish new package_root ({extracted_dir} -> {package_root}): {publish_err}")
+
+            if backup_dir and backup_dir.exists():
+                try:
+                    shutil.rmtree(backup_dir)
+                except Exception as cleanup_err:
+                    print(f"pipeline warning: failed to remove temporary backup directory {backup_dir}: {cleanup_err}", file=sys.stderr)
     finally:
         shutil.rmtree(staging_dir, ignore_errors=True)
 

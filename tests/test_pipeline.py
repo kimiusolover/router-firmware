@@ -264,3 +264,142 @@ class PipelineUnitTests(unittest.TestCase):
                     with unittest.mock.patch.object(mod, "build_dir", return_value=tmp_path):
                         with self.assertRaisesRegex(RuntimeError, "destination package_root is a symlink"):
                             mod.extract_router_packages("x86_64-qemu-uefi-preview")
+
+    def test_extract_router_packages_publication_failure_and_rollback(self) -> None:
+        import importlib.util
+        import io
+        import tempfile
+        import tarfile
+        spec = importlib.util.spec_from_file_location("pipeline_mod", ROOT / "scripts" / "pipeline.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            package_sources = tmp_path / "package-sources"
+            package_sources.mkdir(parents=True, exist_ok=True)
+            sentinel = package_sources / "sentinel.txt"
+            sentinel.write_text("unrelated sibling")
+
+            # Existing package_root with identifiable content
+            package_root = package_sources / "router-packages"
+            package_root.mkdir(parents=True, exist_ok=True)
+            (package_root / "old.txt").write_text("old content v1")
+
+            tar_path = tmp_path / "new.tar.gz"
+            with tarfile.open(tar_path, "w:gz") as tar:
+                ti = tarfile.TarInfo(name="router-packages/new.txt")
+                ti.size = 11
+                tar.addfile(ti, io.BytesIO(b"new content"))
+
+            original_rename = Path.rename
+
+            def fail_publish_rename(self, target):
+                # Fail only when renaming extracted_dir -> package_root
+                if self.name == "router-packages" and Path(target) == package_root:
+                    raise OSError("simulated publish rename failure")
+                return original_rename(self, target)
+
+            with unittest.mock.patch.object(mod, "target_required_sources", return_value=[(Path("src.yaml"), {"name": "router-packages", "revision": "123"})]):
+                with unittest.mock.patch.object(mod, "fetch_source_archive", return_value=tar_path):
+                    with unittest.mock.patch.object(mod, "build_dir", return_value=tmp_path):
+                        with unittest.mock.patch.object(Path, "rename", autospec=True, side_effect=fail_publish_rename):
+                            with self.assertRaisesRegex(RuntimeError, "failed to publish new package_root"):
+                                mod.extract_router_packages("x86_64-qemu-uefi-preview")
+
+            # Assert existing file is restored via rollback
+            self.assertTrue(package_root.is_dir())
+            self.assertTrue((package_root / "old.txt").is_file())
+            self.assertEqual((package_root / "old.txt").read_text(), "old content v1")
+            self.assertEqual(sentinel.read_text(), "unrelated sibling")
+
+    def test_extract_router_packages_restoration_failure(self) -> None:
+        import importlib.util
+        import io
+        import tempfile
+        import tarfile
+        spec = importlib.util.spec_from_file_location("pipeline_mod", ROOT / "scripts" / "pipeline.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            package_sources = tmp_path / "package-sources"
+            package_sources.mkdir(parents=True, exist_ok=True)
+            sentinel = package_sources / "sentinel.txt"
+            sentinel.write_text("unrelated sibling")
+
+            # Existing package_root with identifiable content
+            package_root = package_sources / "router-packages"
+            package_root.mkdir(parents=True, exist_ok=True)
+            (package_root / "old.txt").write_text("old content v1")
+
+            tar_path = tmp_path / "new.tar.gz"
+            with tarfile.open(tar_path, "w:gz") as tar:
+                ti = tarfile.TarInfo(name="router-packages/new.txt")
+                ti.size = 11
+                tar.addfile(ti, io.BytesIO(b"new content"))
+
+            original_rename = Path.rename
+
+            def fail_both_renames(self, target):
+                # Fail rename from package_root -> backup_dir? No, fail publish rename & rollback rename
+                if self.name == "router-packages" and Path(target) == package_root:
+                    raise OSError("simulated publish failure")
+                if self.name.startswith(".backup-router-packages-") and Path(target) == package_root:
+                    raise OSError("simulated rollback failure")
+                return original_rename(self, target)
+
+            with unittest.mock.patch.object(mod, "target_required_sources", return_value=[(Path("src.yaml"), {"name": "router-packages", "revision": "123"})]):
+                with unittest.mock.patch.object(mod, "fetch_source_archive", return_value=tar_path):
+                    with unittest.mock.patch.object(mod, "build_dir", return_value=tmp_path):
+                        with unittest.mock.patch.object(Path, "rename", autospec=True, side_effect=fail_both_renames):
+                            with self.assertRaisesRegex(RuntimeError, "ROLLBACK FAILED"):
+                                mod.extract_router_packages("x86_64-qemu-uefi-preview")
+
+            # Backup directory must be retained
+            backups = list(package_sources.glob(".backup-router-packages-*"))
+            self.assertEqual(len(backups), 1)
+            self.assertTrue((backups[0] / "old.txt").is_file())
+            self.assertEqual((backups[0] / "old.txt").read_text(), "old content v1")
+            self.assertEqual(sentinel.read_text(), "unrelated sibling")
+
+    def test_extract_router_packages_successful_replacement(self) -> None:
+        import importlib.util
+        import io
+        import tempfile
+        import tarfile
+        spec = importlib.util.spec_from_file_location("pipeline_mod", ROOT / "scripts" / "pipeline.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            package_sources = tmp_path / "package-sources"
+            package_sources.mkdir(parents=True, exist_ok=True)
+            sentinel = package_sources / "sentinel.txt"
+            sentinel.write_text("unrelated sibling")
+
+            # Existing package_root with identifiable content
+            package_root = package_sources / "router-packages"
+            package_root.mkdir(parents=True, exist_ok=True)
+            (package_root / "old.txt").write_text("old content v1")
+
+            tar_path = tmp_path / "new.tar.gz"
+            with tarfile.open(tar_path, "w:gz") as tar:
+                ti = tarfile.TarInfo(name="router-packages/new.txt")
+                ti.size = 14
+                tar.addfile(ti, io.BytesIO(b"new content v2"))
+
+            with unittest.mock.patch.object(mod, "target_required_sources", return_value=[(Path("src.yaml"), {"name": "router-packages", "revision": "123"})]):
+                with unittest.mock.patch.object(mod, "fetch_source_archive", return_value=tar_path):
+                    with unittest.mock.patch.object(mod, "build_dir", return_value=tmp_path):
+                        res_root, rev = mod.extract_router_packages("x86_64-qemu-uefi-preview")
+
+            self.assertEqual(res_root, package_root)
+            self.assertEqual(rev, "123")
+            self.assertTrue((package_root / "new.txt").is_file())
+            self.assertEqual((package_root / "new.txt").read_text(), "new content v2")
+            self.assertFalse((package_root / "old.txt").exists())
+            self.assertEqual(len(list(package_sources.glob(".backup-router-packages-*"))), 0)
+            self.assertEqual(sentinel.read_text(), "unrelated sibling")
