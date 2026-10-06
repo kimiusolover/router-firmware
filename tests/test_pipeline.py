@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import io
 import subprocess
 import json
 import unittest
+import unittest.mock
 from pathlib import Path
 
 
@@ -82,3 +84,113 @@ class PipelineTests(unittest.TestCase):
             checksums.unlink(missing_ok=True)
             provenance.unlink(missing_ok=True)
             sbom.unlink(missing_ok=True)
+
+
+class PipelineUnitTests(unittest.TestCase):
+    def test_target_required_sources_and_isolation(self) -> None:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("pipeline_mod", ROOT / "scripts" / "pipeline.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        # 1. Target fetches only its resolved source dependencies
+        resolved_x86 = mod.target_required_sources("x86_64-qemu-uefi-preview", strict=False)
+        resolved_names = [v["name"] for _, v in resolved_x86]
+        self.assertIn("router-packages", resolved_names)
+        self.assertIn("linux", resolved_names)
+
+        # 2. Unrelated pending sources do not block strict resolution if not required
+        # If we remove 'linux' from packages.txt of a dummy target that only needs router-packages, strict succeeds
+        with unittest.mock.patch.object(mod, "target_required_packages", return_value=["router-packages"]):
+            resolved_strict = mod.target_required_sources("x86_64-qemu-uefi-preview", strict=True)
+            self.assertEqual(len(resolved_strict), 1)
+            self.assertEqual(resolved_strict[0][1]["name"], "router-packages")
+
+        # 3. Required pending source blocks a strict build
+        with unittest.mock.patch.object(mod, "target_required_packages", return_value=["linux"]):
+            with self.assertRaisesRegex(RuntimeError, "must be status: locked"):
+                mod.target_required_sources("x86_64-qemu-uefi-preview", strict=True)
+
+        # 4. Unknown packages fail closed
+        with unittest.mock.patch.object(mod, "firmware_device_directory", return_value=ROOT / "devices" / "x86_64-qemu-uefi-preview"):
+            with unittest.mock.patch("pathlib.Path.read_text", return_value="unknown-pkg-foo\n"):
+                with self.assertRaisesRegex(RuntimeError, "unknown package 'unknown-pkg-foo'"):
+                    mod.target_required_packages("x86_64-qemu-uefi-preview")
+
+        # 5. Missing or malformed lock fields fail
+        bad_lock = {"name": "test", "status": "locked", "upstream": "https://x.org", "revision": "1", "sha256": "a"*64, "license": "MIT", "archive": "https://x.org/a.tar.gz"}
+        bad_lock_missing = dict(bad_lock, name="")
+        with self.assertRaisesRegex(RuntimeError, "missing name"):
+            mod.validate_source_lock_fields(Path("dummy.yaml"), bad_lock_missing, strict=True)
+
+        # 6. Invalid SHA-256 values rejected
+        bad_hash_lock = {"name": "test", "status": "locked", "upstream": "https://x.org", "revision": "1", "sha256": "1234invalid", "license": "MIT", "archive": "https://x.org/a.tar.gz"}
+        with self.assertRaisesRegex(RuntimeError, "sha256 must be 64 lowercase hexadecimal characters"):
+            mod.validate_source_lock_fields(Path("dummy.yaml"), bad_hash_lock, strict=True)
+
+    def test_fetch_source_archive_caching_and_atomic_downloads(self) -> None:
+        import importlib.util
+        import tempfile
+        import hashlib
+        spec = importlib.util.spec_from_file_location("pipeline_mod", ROOT / "scripts" / "pipeline.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        content = b"fake tarball data"
+        sha = hashlib.sha256(content).hexdigest()
+        source = {
+            "name": "fake-pkg",
+            "revision": "v1.0",
+            "sha256": sha,
+            "archive": "https://example.com/fake.tar.gz",
+        }
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            downloads = Path(tmp_dir)
+
+            # 7. Cached archive corruption is detected and cleaned up
+            corrupt_file = downloads / "fake-pkg-v1.0.source"
+            corrupt_file.write_bytes(b"corrupt data")
+
+            # Mock urllib to return valid content
+            class MockResponse:
+                def __init__(self, data): self.bio = io.BytesIO(data)
+                def __enter__(self): return self
+                def __exit__(self, *args): pass
+                def read(self, size=-1): return self.bio.read(size)
+
+            with unittest.mock.patch("urllib.request.urlopen", side_effect=lambda url: MockResponse(content)):
+                fetched = mod.fetch_source_archive(downloads, source)
+                self.assertEqual(fetched.read_bytes(), content)
+
+            # 8. Download failures do not leave valid-looking partial cache entries
+            corrupt_source = dict(source, sha256="a"*64)
+            with unittest.mock.patch("urllib.request.urlopen", side_effect=lambda url: MockResponse(content)):
+                with self.assertRaisesRegex(RuntimeError, "checksum mismatch"):
+                    mod.fetch_source_archive(downloads, corrupt_source)
+            self.assertFalse((downloads / "fake-pkg-v1.0.source.tmp").exists())
+
+    def test_unsafe_archive_extraction_rejected(self) -> None:
+        import importlib.util
+        import io
+        import tempfile
+        import tarfile
+        spec = importlib.util.spec_from_file_location("pipeline_mod", ROOT / "scripts" / "pipeline.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        # 9. Unsafe archive members are rejected
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            tar_path = tmp_path / "bad.tar.gz"
+
+            with tarfile.open(tar_path, "w:gz") as tar:
+                ti = tarfile.TarInfo(name="../outside.txt")
+                ti.size = 4
+                tar.addfile(ti, io.BytesIO(b"data"))
+
+            with unittest.mock.patch.object(mod, "target_required_sources", return_value=[(Path("src.yaml"), {"name": "router-packages", "revision": "123"})]):
+                with unittest.mock.patch.object(mod, "fetch_source_archive", return_value=tar_path):
+                    with unittest.mock.patch.object(mod, "build_dir", return_value=tmp_path):
+                        with self.assertRaisesRegex(RuntimeError, "unsafe archive member path"):
+                            mod.extract_router_packages("x86_64-qemu-uefi-preview")

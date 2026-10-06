@@ -93,28 +93,109 @@ def input_reference(path: Path) -> str:
         return str(path)
 
 
-def source_locks(strict: bool) -> list[tuple[Path, dict[str, str]]]:
+PACKAGE_SOURCE_MAP: dict[str, list[str]] = {
+    "linux": ["linux"],
+    "systemd": ["systemd"],
+    "hostapd": ["hostapd"],
+    "nftables": ["nftables"],
+    "unbound": ["unbound"],
+    "kea": ["kea"],
+    "jool": ["jool"],
+    "router-packages": ["router-packages"],
+}
+
+
+def validate_source_lock_fields(path: Path, values: dict[str, str], strict: bool) -> None:
+    for field in ("name", "status", "upstream", "revision", "sha256", "license", "archive"):
+        if not values.get(field):
+            fail(f"{path}: missing {field}")
+    if strict:
+        if values["status"] != "locked":
+            fail(f"{path}: source must be status: locked before this stage")
+        for field in ("upstream", "revision", "sha256", "archive"):
+            if values[field] == "unset":
+                fail(f"{path}: {field} must be pinned before this stage")
+        digest = values["sha256"]
+        if len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
+            fail(f"{path}: sha256 must be 64 lowercase hexadecimal characters")
+        if not values["archive"].startswith("https://"):
+            fail(f"{path}: archive must use HTTPS")
+
+
+def source_inventory_audit(strict: bool = False) -> list[tuple[Path, dict[str, str]]]:
+    """Perform an audit of the complete source inventory in sources/*.yaml."""
     locks = []
     for path in sorted((ROOT / "sources").glob("*.yaml")):
         values = scalar_yaml(path)
-        for field in ("name", "status", "upstream", "revision", "sha256", "license", "archive"):
-            if not values.get(field):
-                fail(f"{path}: missing {field}")
-        if strict:
-            if values["status"] != "locked":
-                fail(f"{path}: source must be status: locked before this stage")
-            for field in ("upstream", "revision", "sha256", "archive"):
-                if values[field] == "unset":
-                    fail(f"{path}: {field} must be pinned before this stage")
-            digest = values["sha256"]
-            if len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
-                fail(f"{path}: sha256 must be 64 lowercase hexadecimal characters")
-            if not values["archive"].startswith("https://"):
-                fail(f"{path}: archive must use HTTPS")
+        validate_source_lock_fields(path, values, strict)
         locks.append((path, values))
     if not locks:
         fail("no source locks found")
     return locks
+
+
+def source_locks(strict: bool) -> list[tuple[Path, dict[str, str]]]:
+    """Alias for full source inventory audit."""
+    return source_inventory_audit(strict)
+
+
+def target_required_packages(device: str) -> list[str]:
+    """Read and validate the package list for a given device target."""
+    composition = firmware_device_directory(device)
+    packages_file = composition / "packages.txt"
+    if not packages_file.is_file():
+        fail(f"missing {packages_file}")
+
+    seen = set()
+    requested: list[str] = []
+    for raw_line in packages_file.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line in seen:
+            fail(f"{packages_file}: duplicate package declaration '{line}'")
+        if line not in PACKAGE_SOURCE_MAP:
+            fail(f"{packages_file}: unknown package '{line}' with no source mapping")
+        seen.add(line)
+        requested.append(line)
+    return requested
+
+
+def target_required_sources(device: str, strict: bool = False) -> list[tuple[Path, dict[str, str]]]:
+    """Resolve package dependencies to source locks required by the target device."""
+    requested_packages = target_required_packages(device)
+
+    # Map packages to source names
+    required_source_names: list[str] = []
+    seen_sources: set[str] = set()
+    for pkg in requested_packages:
+        sources = PACKAGE_SOURCE_MAP[pkg]
+        if not sources:
+            fail(f"package '{pkg}' maps to empty source list")
+        for src_name in sources:
+            if src_name not in seen_sources:
+                seen_sources.add(src_name)
+                required_source_names.append(src_name)
+
+    # Build index of available source lock files
+    available_locks: dict[str, tuple[Path, dict[str, str]]] = {}
+    for path in sorted((ROOT / "sources").glob("*.yaml")):
+        values = scalar_yaml(path)
+        src_name = values.get("name")
+        if src_name:
+            if src_name in available_locks:
+                fail(f"duplicate source lock for name '{src_name}' in {path} and {available_locks[src_name][0]}")
+            available_locks[src_name] = (path, values)
+
+    resolved: list[tuple[Path, dict[str, str]]] = []
+    for src_name in required_source_names:
+        if src_name not in available_locks:
+            fail(f"missing source lock file for required source '{src_name}'")
+        path, values = available_locks[src_name]
+        validate_source_lock_fields(path, values, strict)
+        resolved.append((path, values))
+
+    return resolved
 
 
 def verify(device: str, strict: bool = False) -> None:
@@ -140,15 +221,7 @@ def verify(device: str, strict: bool = False) -> None:
     for name in preserved:
         if name not in text:
             fail(f"{definition_path}: preserved region {name} is required")
-    locks = source_locks(strict)
-    names = {values["name"] for _, values in locks}
-    requested = {
-        line.strip() for line in (composition / "packages.txt").read_text(encoding="utf-8").splitlines()
-        if line.strip() and not line.lstrip().startswith("#")
-    }
-    missing = requested - names
-    if missing:
-        fail(f"{composition / 'packages.txt'}: no source lock for {', '.join(sorted(missing))}")
+    target_required_sources(device, strict)
 
 
 def build_dir(device: str) -> Path:
@@ -157,40 +230,80 @@ def build_dir(device: str) -> Path:
     return path
 
 
+def fetch_source_archive(downloads: Path, source: dict[str, str]) -> Path:
+    """Fetch and verify a single source archive with atomic cache publishing."""
+    destination = downloads / f"{source['name']}-{source['revision']}.source"
+    expected_sha = source["sha256"]
+
+    if destination.is_file():
+        digest = hashlib.file_digest(destination.open("rb"), "sha256").hexdigest()
+        if digest == expected_sha:
+            return destination
+        destination.unlink(missing_ok=True)
+
+    tmp_file = downloads / f"{source['name']}-{source['revision']}.source.tmp"
+    tmp_file.unlink(missing_ok=True)
+
+    print(f"fetch {source['name']}")
+    try:
+        with urllib.request.urlopen(source["archive"]) as response, tmp_file.open("wb") as output:
+            shutil.copyfileobj(response, output)
+        digest = hashlib.file_digest(tmp_file.open("rb"), "sha256").hexdigest()
+        if digest != expected_sha:
+            fail(f"checksum mismatch for {source['name']}")
+        tmp_file.replace(destination)
+    except Exception:
+        tmp_file.unlink(missing_ok=True)
+        raise
+    return destination
+
+
 def fetch(device: str) -> None:
     verify(device, strict=True)
     downloads = build_dir(device) / "downloads"
     downloads.mkdir(exist_ok=True)
-    for _, source in source_locks(strict=True):
-        destination = downloads / f"{source['name']}-{source['revision']}.source"
-        if not destination.exists():
-            print(f"fetch {source['name']}")
-            with urllib.request.urlopen(source["archive"]) as response, destination.open("wb") as output:
-                shutil.copyfileobj(response, output)
-        digest = hashlib.file_digest(destination.open("rb"), "sha256").hexdigest()
-        if digest != source["sha256"]:
-            destination.unlink(missing_ok=True)
-            fail(f"checksum mismatch for {source['name']}")
+    for _, source in target_required_sources(device, strict=True):
+        fetch_source_archive(downloads, source)
 
 
 def extract_router_packages(device: str) -> tuple[Path, str]:
     """Extract the locked internal router-packages archive for recipe use."""
-    source = next(
-        values for _, values in source_locks(strict=True)
+    sources = [
+        values for _, values in target_required_sources(device, strict=True)
         if values["name"] == "router-packages"
-    )
-    archive = build_dir(device) / "downloads" / f"router-packages-{source['revision']}.source"
+    ]
+    if not sources:
+        fail(f"target {device} does not require router-packages")
+    source = sources[0]
+    downloads = build_dir(device) / "downloads"
+    archive = fetch_source_archive(downloads, source)
+
     package_root = build_dir(device) / "package-sources" / "router-packages"
     shutil.rmtree(package_root, ignore_errors=True)
     package_root.parent.mkdir(parents=True, exist_ok=True)
+
     with tarfile.open(archive, mode="r:*") as bundle:
         members = bundle.getmembers()
         if not members:
             fail("router-packages archive is empty")
+
+        # Path safety checks
+        dest_parent = package_root.parent.resolve()
+        for member in members:
+            if not member.name or member.name.startswith("/") or ".." in Path(member.name).parts:
+                fail(f"unsafe archive member path: {member.name}")
+            if member.issym() or member.islnk():
+                target_path = (dest_parent / member.linkname).resolve() if not member.linkname.startswith("/") else Path(member.linkname).resolve()
+                try:
+                    target_path.relative_to(dest_parent)
+                except ValueError:
+                    fail(f"unsafe archive link target: {member.linkname}")
+
         roots = {member.name.split("/", 1)[0] for member in members if member.name}
         if len(roots) != 1:
             fail("router-packages archive must contain exactly one top-level directory")
         bundle.extractall(package_root.parent, filter="data")
+
     extracted = package_root.parent / next(iter(roots))
     if extracted != package_root:
         extracted.rename(package_root)
@@ -486,7 +599,7 @@ def write_sbom(device: str, fixture: bool, entries: list[dict[str, object]], cre
         "hashes": [{"alg": "SHA-256", "content": entry["sha256"]}],
         "properties": [{"name": "router-firmware:format", "value": entry["format"]}],
     } for entry in entries]
-    for _, source in source_locks(not fixture):
+    for _, source in target_required_sources(device, strict=not fixture):
         components.append({
             "type": "library",
             "name": source["name"],
@@ -534,7 +647,7 @@ def attest(device: str) -> None:
         "format": image_format,
     } for p in artifacts]
     if not fixture:
-        source_locks(strict=True)
+        target_required_sources(device, strict=True)
     stamp = os.environ.get("SOURCE_DATE_EPOCH")
     created = datetime.fromtimestamp(int(stamp), timezone.utc).isoformat().replace("+00:00", "Z") if stamp else datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     sbom = write_sbom(device, fixture, entries, created)
@@ -566,7 +679,7 @@ def attest(device: str) -> None:
             "device": device,
             "releaseKind": "unflashable-fixture" if fixture else "firmware-image",
             "sourceDateEpoch": stamp or None,
-            "sources": [v for _, v in source_locks(not fixture)],
+            "sources": [v for _, v in target_required_sources(device, strict=not fixture)],
             "verifier": {
                 "repository": "kimiusolover/routerctl",
                 "commit": os.environ.get("ROUTERCTL_VERIFIER_COMMIT"),

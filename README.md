@@ -90,13 +90,31 @@ the preserve list cannot be written.
 The pipeline is implemented as `fetch → build → rootfs → image → attest`.
 Each stage validates its inputs before proceeding:
 
-- `fetch` downloads only HTTPS archives with a pinned SHA-256.
+- `fetch` resolves package dependencies declared in `devices/<device>/packages.txt` via
+  an explicit package-to-source mapping. It downloads and verifies only the source
+  archives required by the selected target. Archives are downloaded to temporary files
+  (`.tmp`) and published atomically only after SHA-256 verification. Unrelated
+  `pending-verification` sources do not block targets that do not use them.
 - `build` runs executable, repository-owned `packages/*/build` recipes with a
   controlled build environment.
 - `rootfs` composes `rootfs/` and the device overlay into `build/<device>/`.
 - `image` additionally requires `status: supported`, a verified partition map,
   and an executable `image/layouts/<device>.sh` layout definition.
-- `attest` emits the release manifest, checksums, and source provenance.
+- `attest` emits the release manifest, checksums, CycloneDX 1.5 SBOM, and source provenance,
+  recording exact resolved source inputs for the build target.
+
+The repository maintains two source validation levels:
+- **Target-Specific Dependency Resolution (`target_required_sources`)**: Used during
+  `fetch`, `build`, `rootfs`, `image`, and `attest` to enforce strict locking and verification
+  on sources required by the target.
+- **Source Inventory Audit (`source_inventory_audit`)**: An independent audit function
+  that validates the formatting and completeness of every entry across all `sources/*.yaml`.
+
+### Adding a Package
+1. Add or update the corresponding source lock in `sources/<source>.yaml` (defining `name`, `status`, `upstream`, `revision`, `sha256`, `archive`, `license`).
+2. Map the package name to its required source name(s) in `PACKAGE_SOURCE_MAP` within `scripts/pipeline.py`.
+3. Declare the package in the target's composition at `devices/<device>/packages.txt`.
+4. Provide an executable build recipe in `packages/<group>/build`.
 
 AX23V remains in discovery until its board support, source revisions, partition
 map, and signed-image format are verified. Consequently, only `make verify`
