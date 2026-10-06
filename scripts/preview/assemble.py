@@ -54,6 +54,11 @@ def main():
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         if 'guest' in pkg['roles']:
             run('bsdtar', '-xpf', archive, '--no-same-owner', '-C', dest, '--exclude=.PKGINFO', '--exclude=.BUILDINFO', '--exclude=.MTREE', '--exclude=.INSTALL')
+    # Generators run before systemd-hwdb-update.service during boot. Build the
+    # guest hwdb now so systemd-imds-generator can inspect DMI data safely.
+    # Use the host compiler with --root: the target command cannot parse the
+    # sources correctly in the build chroot because /proc is not mounted.
+    run('systemd-hwdb', '--root', dest, '--usr', 'update')
     # Preserve package system accounts; add only the preview administrator.
     overlay = ROOT/'overlays'/DEVICE
     for name in ('passwd', 'group', 'shadow'):
