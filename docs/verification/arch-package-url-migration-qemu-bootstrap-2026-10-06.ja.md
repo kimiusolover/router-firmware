@@ -70,3 +70,33 @@
 ## 5. 次に実施すべき作業
 
 `qemu-bootstrap-test` を完走させるには、Ubuntu host 上で無理に symlink や system library の置換を行わず、Arch Linux userspace / VM / persistent Cloud Computer など、bundled QEMU が要求する glibc 2.42+ と全 host libraries を提供する実行環境で同じ `make qemu-bootstrap-test` を再実行してください。repository の artifact lock 修正はこの時点で完了しています。
+
+## Arch Linux 実機検証結果
+
+検証環境:
+- OS: Arch Linux
+- Repository HEAD: `aa61e60` (`Merge pull request #38 from kimiusolover/feature/arch-package-archive-urls`)
+- 検証日: 2026-10-06
+
+実行結果:
+
+```text
+python3 scripts/preview/prepare.py --fetch
+PASS
+Pinned package cache verified; tools extracted successfully.
+
+make qemu-bootstrap
+PASS
+Generated:
+dist/routeros-x86_64-uefi-preview.img
+dist/routeros-x86_64-uefi-preview.img.qemu.json
+
+make qemu-bootstrap-test
+PASS
+qemu-bootstrap-test exit=0
+
+QEMU bootstrap testでは複数の evidence.json が生成され、qemu-bootstrap-test は終了コード 0 で完了した。
+
+Ubuntu 24.04環境ではQEMU実行時のGLIBC_2.42/GLIBC_2.43要求により実行できなかったが、Arch Linux環境では同じコミット上でQEMU bootstrap testを正常完了できることを確認した。
+
+今回の検証により、Arch package Archive URL変更後のpackage cache検証、preview image生成、およびQEMU bootstrap testまでの一連の処理がArch Linux環境で正常に完了することを確認した。
