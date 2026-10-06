@@ -35,7 +35,7 @@
   {
     "name": "tzdata",
     "version": "2026c-1",
-    "url": "https://mirrors.cat.net/archlinux/core/os/x86_64/tzdata-2026c-1-x86_64.pkg.tar.zst",
+    "url": "https://archive.archlinux.org/packages/t/tzdata/tzdata-2026c-1-x86_64.pkg.tar.zst",
     "roles": [
       "guest"
     ],
@@ -46,7 +46,7 @@
   {
     "name": "glibc",
     "version": "2.44+r24+g16be1518495f-1",
-    "url": "https://mirrors.cat.net/archlinux/core/os/x86_64/glibc-2.44+r24+g16be1518495f-1-x86_64.pkg.tar.zst",
+    "url": "https://archive.archlinux.org/packages/g/glibc/glibc-2.44+r24+g16be1518495f-1-x86_64.pkg.tar.zst",
     "roles": [
       "guest"
     ],
@@ -90,7 +90,7 @@
   {
     "name": "readline",
     "version": "8.3.003-1",
-    "url": "https://mirrors.cat.net/archlinux/core/os/x86_64/readline-8.3.003-1-x86_64.pkg.tar.zst",
+    "url": "https://archive.archlinux.org/packages/r/readline/readline-8.3.003-1-x86_64.pkg.tar.zst",
     "roles": [
       "guest"
     ],
@@ -222,7 +222,7 @@
   {
     "name": "xz",
     "version": "5.8.3-1",
-    "url": "https://mirrors.cat.net/archlinux/core/os/x86_64/xz-5.8.3-1-x86_64.pkg.tar.zst",
+    "url": "https://archive.archlinux.org/packages/x/xz/xz-5.8.3-1-x86_64.pkg.tar.zst",
     "roles": [
       "guest"
     ],
@@ -277,7 +277,7 @@
   {
     "name": "libldap",
     "version": "2.6.13-1",
-    "url": "https://mirrors.cat.net/archlinux/core/os/x86_64/libldap-2.6.13-1-x86_64.pkg.tar.zst",
+    "url": "https://archive.archlinux.org/packages/l/libldap/libldap-2.6.13-1-x86_64.pkg.tar.zst",
     "roles": [
       "guest"
     ],
@@ -365,7 +365,7 @@
   {
     "name": "libtirpc",
     "version": "1.3.7-1",
-    "url": "https://mirrors.cat.net/archlinux/core/os/x86_64/libtirpc-1.3.7-1-x86_64.pkg.tar.zst",
+    "url": "https://archive.archlinux.org/packages/l/libtirpc/libtirpc-1.3.7-1-x86_64.pkg.tar.zst",
     "roles": [
       "guest"
     ],
@@ -420,7 +420,7 @@
   {
     "name": "systemd-libs",
     "version": "261.2-1",
-    "url": "https://mirrors.cat.net/archlinux/core/os/x86_64/systemd-libs-261.2-1-x86_64.pkg.tar.zst",
+    "url": "https://archive.archlinux.org/packages/s/systemd/systemd-libs-261.2-1-x86_64.pkg.tar.zst",
     "roles": [
       "guest"
     ],
@@ -431,7 +431,7 @@
   {
     "name": "pam",
     "version": "1.7.2-2",
-    "url": "https://mirrors.cat.net/archlinux/core/os/x86_64/pam-1.7.2-2-x86_64.pkg.tar.zst",
+    "url": "https://archive.archlinux.org/packages/p/pam/pam-1.7.2-2-x86_64.pkg.tar.zst",
     "roles": [
       "guest"
     ],
@@ -453,7 +453,7 @@
   {
     "name": "coreutils",
     "version": "9.11-2",
-    "url": "https://mirrors.cat.net/archlinux/core/os/x86_64/coreutils-9.11-2-x86_64.pkg.tar.zst",
+    "url": "https://archive.archlinux.org/packages/c/coreutils/coreutils-9.11-2-x86_64.pkg.tar.zst",
     "roles": [
       "guest"
     ],
@@ -464,7 +464,7 @@
   {
     "name": "device-mapper",
     "version": "2.03.42-1",
-    "url": "https://mirrors.cat.net/archlinux/core/os/x86_64/device-mapper-2.03.42-1-x86_64.pkg.tar.zst",
+    "url": "https://archive.archlinux.org/packages/d/device-mapper/device-mapper-2.03.42-1-x86_64.pkg.tar.zst",
     "roles": [
       "guest"
     ],
@@ -497,7 +497,7 @@
   {
     "name": "cryptsetup",
     "version": "2.8.7-1",
-    "url": "https://mirrors.cat.net/archlinux/core/os/x86_64/cryptsetup-2.8.7-1-x86_64.pkg.tar.zst",
+    "url": "https://archive.archlinux.org/packages/c/cryptsetup/cryptsetup-2.8.7-1-x86_64.pkg.tar.zst",
     "roles": [
       "guest"
     ],
@@ -640,7 +640,7 @@
   {
     "name": "hwdata",
     "version": "0.410-1",
-    "url": "https://mirrors.cat.net/archlinux/core/os/x86_64/hwdata-0.410-1-any.pkg.tar.zst",
+    "url": "https://archive.archlinux.org/packages/h/hwdata/hwdata-0.410-1-any.pkg.tar.zst",
     "roles": [
       "guest"
     ],
@@ -794,7 +794,7 @@
   {
     "name": "leancrypto",
     "version": "1.8.0-1",
-    "url": "https://mirrors.cat.net/archlinux/core/os/x86_64/leancrypto-1.8.0-1-x86_64.pkg.tar.zst",
+    "url": "https://archive.archlinux.org/packages/l/leancrypto/leancrypto-1.8.0-1-x86_64.pkg.tar.zst",
     "roles": [
       "guest"
     ],
@@ -1025,7 +1025,7 @@
   {
     "name": "mkinitcpio",
     "version": "41.1-1",
-    "url": "https://mirrors.cat.net/archlinux/core/os/x86_64/mkinitcpio-41.1-1-any.pkg.tar.zst",
+    "url": "https://archive.archlinux.org/packages/m/mkinitcpio/mkinitcpio-41.1-1-any.pkg.tar.zst",
     "roles": [
       "guest"
     ],
