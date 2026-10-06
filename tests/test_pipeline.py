@@ -170,6 +170,17 @@ class PipelineUnitTests(unittest.TestCase):
                     mod.fetch_source_archive(downloads, corrupt_source)
             self.assertFalse((downloads / "fake-pkg-v1.0.source.tmp").exists())
 
+    def test_validate_identifier(self) -> None:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("pipeline_mod", ROOT / "scripts" / "pipeline.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        for invalid in ("../escape", "pkg/name", "name;id", "", "pkg\\name"):
+            with self.subTest(invalid=invalid):
+                with self.assertRaisesRegex(RuntimeError, "invalid characters or empty"):
+                    mod.validate_identifier(invalid, "test label")
+
     def test_unsafe_archive_extraction_rejected(self) -> None:
         import importlib.util
         import io
@@ -181,9 +192,12 @@ class PipelineUnitTests(unittest.TestCase):
 
         # Test cases for archive safety
         test_cases = [
-            ("../outside.txt", tarfile.REGTYPE, None, "unsafe archive member path"),
+            (".", tarfile.DIRTYPE, None, "unsafe or invalid archive member path"),
+            ("./some-file", tarfile.REGTYPE, None, "(extraction failed to produce expected directory|router-packages archive must contain)"),
+            ("../outside.txt", tarfile.REGTYPE, None, "unsafe or invalid archive member path"),
             ("/abs/path.txt", tarfile.REGTYPE, None, "unsafe archive member path"),
-            ("pkg/symlink", tarfile.SYMTYPE, "../../outside.txt", "unsafe archive link target"),
+            ("pkg/symlink", tarfile.SYMTYPE, "../../outside.txt", "unsafe archive symlink target"),
+            ("pkg/hardlink", tarfile.LNKTYPE, "../outside.txt", "unsafe archive hardlink target"),
             ("pkg/fifo", tarfile.FIFOTYPE, None, "unsafe archive member type"),
         ]
 
@@ -191,6 +205,11 @@ class PipelineUnitTests(unittest.TestCase):
             with self.subTest(member_name=member_name):
                 with tempfile.TemporaryDirectory() as tmp_dir:
                     tmp_path = Path(tmp_dir)
+                    package_sources = tmp_path / "package-sources"
+                    package_sources.mkdir(parents=True, exist_ok=True)
+                    sentinel = package_sources / "sentinel.txt"
+                    sentinel.write_text("unrelated sibling data")
+
                     tar_path = tmp_path / "bad.tar.gz"
 
                     with tarfile.open(tar_path, "w:gz") as tar:
@@ -209,3 +228,39 @@ class PipelineUnitTests(unittest.TestCase):
                             with unittest.mock.patch.object(mod, "build_dir", return_value=tmp_path):
                                 with self.assertRaisesRegex(RuntimeError, expected_err):
                                     mod.extract_router_packages("x86_64-qemu-uefi-preview")
+
+                    # Assert sentinel file in parent directory remains untouched
+                    self.assertTrue(sentinel.is_file())
+                    self.assertEqual(sentinel.read_text(), "unrelated sibling data")
+
+    def test_extract_router_packages_preexisting_symlink_rejected(self) -> None:
+        import importlib.util
+        import io
+        import tempfile
+        import tarfile
+        spec = importlib.util.spec_from_file_location("pipeline_mod", ROOT / "scripts" / "pipeline.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            package_sources = tmp_path / "package-sources"
+            package_sources.mkdir(parents=True, exist_ok=True)
+
+            # Create pre-existing symlink at destination
+            target_outside = tmp_path / "outside_dir"
+            target_outside.mkdir(parents=True, exist_ok=True)
+            symlink_dest = package_sources / "router-packages"
+            symlink_dest.symlink_to(target_outside)
+
+            tar_path = tmp_path / "valid.tar.gz"
+            with tarfile.open(tar_path, "w:gz") as tar:
+                ti = tarfile.TarInfo(name="router-packages/foo.txt")
+                ti.size = 4
+                tar.addfile(ti, io.BytesIO(b"data"))
+
+            with unittest.mock.patch.object(mod, "target_required_sources", return_value=[(Path("src.yaml"), {"name": "router-packages", "revision": "123"})]):
+                with unittest.mock.patch.object(mod, "fetch_source_archive", return_value=tar_path):
+                    with unittest.mock.patch.object(mod, "build_dir", return_value=tmp_path):
+                        with self.assertRaisesRegex(RuntimeError, "destination package_root is a symlink"):
+                            mod.extract_router_packages("x86_64-qemu-uefi-preview")

@@ -230,8 +230,15 @@ def build_dir(device: str) -> Path:
     return path
 
 
+def validate_identifier(value: str, label: str) -> None:
+    if not value or any(c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-" for c in value):
+        fail(f"invalid characters or empty {label}: {value!r}")
+
+
 def fetch_source_archive(downloads: Path, source: dict[str, str]) -> Path:
     """Fetch and verify a single source archive with atomic cache publishing."""
+    validate_identifier(source["name"], "source name")
+    validate_identifier(source["revision"], "source revision")
     destination = downloads / f"{source['name']}-{source['revision']}.source"
     expected_sha = source["sha256"]
 
@@ -280,58 +287,93 @@ def extract_router_packages(device: str) -> tuple[Path, str]:
     downloads = build_dir(device) / "downloads"
     archive = fetch_source_archive(downloads, source)
 
-    package_root = build_dir(device) / "package-sources" / "router-packages"
-    shutil.rmtree(package_root, ignore_errors=True)
-    package_root.parent.mkdir(parents=True, exist_ok=True)
+    package_sources_dir = build_dir(device) / "package-sources"
+    package_sources_dir.mkdir(parents=True, exist_ok=True)
+    if package_sources_dir.is_symlink():
+        fail(f"package-sources directory is a symlink: {package_sources_dir}")
 
-    with tarfile.open(archive, mode="r:*") as bundle:
-        members = bundle.getmembers()
-        if not members:
-            fail("router-packages archive is empty")
+    package_root = package_sources_dir / "router-packages"
+    if package_root.is_symlink():
+        fail(f"destination package_root is a symlink: {package_root}")
 
-        dest_parent = package_root.parent.resolve()
-        for member in members:
-            if not member.name or member.name.startswith("/") or member.name.startswith("\\"):
-                fail(f"unsafe archive member path: {member.name}")
-            if ".." in Path(member.name).parts:
-                fail(f"unsafe archive member path: {member.name}")
+    staging_dir = package_sources_dir / f".tmp-extract-router-packages-{uuid.uuid4().hex}"
+    shutil.rmtree(staging_dir, ignore_errors=True)
+    staging_dir.mkdir(parents=True, exist_ok=False)
 
-            member_dest = (dest_parent / member.name).resolve()
-            try:
-                member_dest.relative_to(dest_parent)
-            except ValueError:
-                fail(f"unsafe archive member path: {member.name}")
+    try:
+        with tarfile.open(archive, mode="r:*") as bundle:
+            members = bundle.getmembers()
+            if not members:
+                fail("router-packages archive is empty")
 
-            if member.issym() or member.islnk():
-                if not member.linkname or member.linkname.startswith("/") or member.linkname.startswith("\\"):
-                    fail(f"unsafe archive link target: {member.linkname}")
-                member_dir = member_dest.parent
-                target_path = (member_dir / member.linkname).resolve()
+            staging_resolved = staging_dir.resolve()
+            top_level_roots: set[str] = set()
+
+            for member in members:
+                raw_name = member.name
+                if not raw_name or raw_name.startswith("/") or raw_name.startswith("\\"):
+                    fail(f"unsafe archive member path: {raw_name}")
+
+                parts = [p for p in Path(raw_name).parts if p not in ("", ".")]
+                if not parts or any(p == ".." for p in parts):
+                    fail(f"unsafe or invalid archive member path: {raw_name}")
+
+                normalized_rel = Path(*parts)
+                member_dest = (staging_resolved / normalized_rel).resolve()
                 try:
-                    target_path.relative_to(dest_parent)
+                    member_dest.relative_to(staging_resolved)
                 except ValueError:
-                    fail(f"unsafe archive link target: {member.linkname}")
-            elif not (member.isfile() or member.isdir()):
-                fail(f"unsafe archive member type for {member.name}")
+                    fail(f"unsafe archive member path: {raw_name}")
 
-        roots = {member.name.split("/", 1)[0] for member in members if member.name}
-        if len(roots) != 1:
-            fail("router-packages archive must contain exactly one top-level directory")
+                top_level_roots.add(parts[0])
 
-        extracted_root = package_root.parent / next(iter(roots))
-        shutil.rmtree(extracted_root, ignore_errors=True)
-        try:
-            bundle.extractall(package_root.parent, filter="data")
-            if not extracted_root.is_dir():
-                fail(f"extraction failed to produce expected directory {extracted_root}")
-            if extracted_root != package_root:
-                if package_root.exists():
-                    shutil.rmtree(package_root, ignore_errors=True)
-                extracted_root.rename(package_root)
-        except Exception:
-            shutil.rmtree(extracted_root, ignore_errors=True)
-            shutil.rmtree(package_root, ignore_errors=True)
-            raise
+                if member.issym():
+                    if not member.linkname or member.linkname.startswith("/") or member.linkname.startswith("\\"):
+                        fail(f"unsafe archive symlink target: {member.linkname}")
+                    member_dir = member_dest.parent
+                    target_path = (member_dir / member.linkname).resolve()
+                    try:
+                        target_path.relative_to(staging_resolved)
+                    except ValueError:
+                        fail(f"unsafe archive symlink target: {member.linkname}")
+                elif member.islnk():
+                    if not member.linkname or member.linkname.startswith("/") or member.linkname.startswith("\\"):
+                        fail(f"unsafe archive hardlink target: {member.linkname}")
+                    target_parts = [p for p in Path(member.linkname).parts if p not in ("", ".")]
+                    if not target_parts or any(p == ".." for p in target_parts):
+                        fail(f"unsafe archive hardlink target: {member.linkname}")
+                    target_path = (staging_resolved / Path(*target_parts)).resolve()
+                    try:
+                        target_path.relative_to(staging_resolved)
+                    except ValueError:
+                        fail(f"unsafe archive hardlink target: {member.linkname}")
+                elif not (member.isfile() or member.isdir()):
+                    fail(f"unsafe archive member type for {raw_name}")
+
+            top_level_roots.discard(".")
+            top_level_roots.discard("..")
+            if len(top_level_roots) != 1:
+                fail(f"router-packages archive must contain exactly one top-level directory, found: {sorted(top_level_roots)}")
+
+            root_name = next(iter(top_level_roots))
+            if root_name in (".", "..", ""):
+                fail(f"invalid root directory name in archive: {root_name!r}")
+
+            bundle.extractall(staging_dir, filter="data")
+
+            extracted_dir = staging_dir / root_name
+            if not extracted_dir.is_dir():
+                fail(f"extraction failed to produce expected directory {extracted_dir}")
+
+            if package_root.exists() or package_root.is_symlink():
+                if package_root.is_symlink() or not package_root.is_dir():
+                    package_root.unlink(missing_ok=True)
+                else:
+                    shutil.rmtree(package_root)
+
+            extracted_dir.rename(package_root)
+    finally:
+        shutil.rmtree(staging_dir, ignore_errors=True)
 
     return package_root, source["revision"]
 
