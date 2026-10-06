@@ -90,7 +90,7 @@ def main():
     kernel_version = kernel_dir.name
     run('depmod', '-b', dest, kernel_version)
     init = WORK/'initramfs-tree'; init.mkdir()
-    for name in ('bin', 'dev', 'proc', 'sys', 'newroot', 'lib/modules'): (init/name).mkdir(parents=True, exist_ok=True)
+    for name in ('bin', 'dev', 'proc', 'sys', 'newroot', 'lib/modules', 'run', 'tmp'): (init/name).mkdir(parents=True, exist_ok=True)
     busybox = dest/'usr/lib/initcpio/busybox'
     shutil.copyfile(busybox, init/'bin/busybox'); (init/'bin/busybox').chmod(0o755)
     for name in ('libc.so.6', 'libcrypt.so.2', 'libblkid.so.1', 'libmount.so.1', 'libsystemd.so.0', 'libgcc_s.so.1', 'ld-linux-x86-64.so.2'):
