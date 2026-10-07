@@ -42,6 +42,89 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(runner.count('"user,model=e1000e"'), 2)
         self.assertNotIn('"user,model=virtio-net-pci"', runner)
 
+    def test_ax23v1_source_closure(self) -> None:
+        import sys
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import pipeline
+        closure = pipeline.target_required_sources("ax23v-v1")
+        expected = {
+            "linux",
+            "systemd",
+            "hostapd",
+            "nftables",
+            "unbound",
+            "kea",
+            "jool",
+            "router-packages",
+        }
+        self.assertEqual(closure, expected)
+
+    def test_unrelated_pending_source_does_not_block_fetch(self) -> None:
+        # Create a dummy source in sources/ that is pending-verification and unrelated.
+        dummy_yaml = ROOT / "sources" / "dummy_unrelated.yaml"
+        dummy_yaml.write_text(
+            "name: dummy-unrelated\n"
+            "status: pending-verification\n"
+            "upstream: https://example.com/\n"
+            "revision: unset\n"
+            "sha256: unset\n"
+            "archive: unset\n"
+            "license: MIT\n",
+            encoding="utf-8",
+        )
+        try:
+            result = self.run_pipeline("fetch", "--device", "ax23v-v1")
+            # Should fail on a required pending source (e.g. hostapd.yaml), NOT dummy_unrelated.yaml.
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("source must be status: locked", result.stderr)
+            self.assertNotIn("dummy_unrelated.yaml", result.stderr)
+        finally:
+            dummy_yaml.unlink(missing_ok=True)
+
+    def test_required_pending_source_blocks_fetch(self) -> None:
+        result = self.run_pipeline("fetch", "--device", "ax23v-v1")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("source must be status: locked", result.stderr)
+
+    def test_invalid_sha256_in_required_locked_source_fails_fetch(self) -> None:
+        # Temporarily set all required sources to locked (dummy valid specs) to isolate sha256 check
+        orig_sources = {}
+        required_sources = ["hostapd", "jool", "kea", "kernel", "nftables", "systemd", "unbound"]
+        for src_name in required_sources:
+            path = ROOT / "sources" / f"{src_name}.yaml"
+            orig_sources[path] = path.read_text(encoding="utf-8")
+            path.write_text(
+                f"name: {src_name if src_name != 'kernel' else 'linux'}\n"
+                "status: locked\n"
+                "upstream: https://example.com/\n"
+                "revision: 1\n"
+                "sha256: 0000000000000000000000000000000000000000000000000000000000000000\n"
+                "license: MIT\n"
+                "archive: https://example.com/archive.tar.gz\n",
+                encoding="utf-8",
+            )
+
+        # Temporarily change router-packages.yaml sha256 to invalid hex length
+        rp_yaml = ROOT / "sources" / "router-packages.yaml"
+        orig_sources[rp_yaml] = rp_yaml.read_text(encoding="utf-8")
+        invalid = orig_sources[rp_yaml].replace(
+            "sha256: a02deee821a1b899a5bf95c69e878a5e08b89c4933f2b5c1f2732dca1d6d67d1",
+            "sha256: invalidsha256",
+        )
+        rp_yaml.write_text(invalid, encoding="utf-8")
+        try:
+            result = self.run_pipeline("fetch", "--device", "ax23v-v1")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("sha256 must be 64 lowercase hexadecimal characters", result.stderr)
+        finally:
+            for path, content in orig_sources.items():
+                path.write_text(content, encoding="utf-8")
+
+    def test_router_packages_revision(self) -> None:
+        rp_yaml = ROOT / "sources" / "router-packages.yaml"
+        content = rp_yaml.read_text(encoding="utf-8")
+        self.assertIn("revision: 0ea91909f8166dca42c8de4ee0f064a167eb7019", content)
+
     def test_sample_image_is_deterministic_and_unflashable(self) -> None:
         artifact = ROOT / "dist" / "ax23v-v1.bin"
         manifest = ROOT / "dist" / "ax23v-v1.manifest.json"
