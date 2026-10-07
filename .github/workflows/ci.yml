@@ -25,7 +25,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: kimiusolover/routerctl
-          ref: e02171e03891f2a1e65442d27e2163826fc2587d
+          ref: c57256536a845511002423c0601f845c1724343d
           path: routerctl
           fetch-depth: 1
       - uses: actions/setup-go@v7
@@ -57,7 +57,7 @@ jobs:
             echo "Verifying $commit"
             (
             cd routerctl
-            go run ./cmd/routerctl verify commit --repo .. "$commit"
+            go run ./cmd/routerctl verify commit --repo .. --profile firmware "$commit"
             )
           done <<< "$commits"
 
