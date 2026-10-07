@@ -364,6 +364,92 @@ class PipelineUnitTests(unittest.TestCase):
             self.assertEqual((backups[0] / "old.txt").read_text(), "old content v1")
             self.assertEqual(sentinel.read_text(), "unrelated sibling")
 
+    def test_extract_router_packages_backup_cleanup_failure_retains_new_tree(self) -> None:
+        import importlib.util
+        import io
+        import shutil
+        import tempfile
+        import tarfile
+        spec = importlib.util.spec_from_file_location("pipeline_mod", ROOT / "scripts" / "pipeline.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            package_sources = tmp_path / "package-sources"
+            package_sources.mkdir(parents=True, exist_ok=True)
+
+            package_root = package_sources / "router-packages"
+            package_root.mkdir(parents=True, exist_ok=True)
+            (package_root / "old.txt").write_text("old content v1")
+
+            tar_path = tmp_path / "new.tar.gz"
+            with tarfile.open(tar_path, "w:gz") as tar:
+                ti = tarfile.TarInfo(name="router-packages/new.txt")
+                ti.size = 14
+                tar.addfile(ti, io.BytesIO(b"new content v2"))
+
+            original_rmtree = shutil.rmtree
+
+            def fail_backup_rmtree(path, *args, **kwargs):
+                path_obj = Path(path)
+                if path_obj.name.startswith(".backup-router-packages-"):
+                    raise OSError("simulated backup rmtree error")
+                return original_rmtree(path, *args, **kwargs)
+
+            with unittest.mock.patch.object(mod, "target_required_sources", return_value=[(Path("src.yaml"), {"name": "router-packages", "revision": "123"})]):
+                with unittest.mock.patch.object(mod, "fetch_source_archive", return_value=tar_path):
+                    with unittest.mock.patch.object(mod, "build_dir", return_value=tmp_path):
+                        with unittest.mock.patch("shutil.rmtree", side_effect=fail_backup_rmtree):
+                            res_root, rev = mod.extract_router_packages("x86_64-qemu-uefi-preview")
+
+            # Assert new tree is published and valid, while backup remains
+            self.assertEqual(res_root, package_root)
+            self.assertTrue((package_root / "new.txt").is_file())
+            self.assertEqual((package_root / "new.txt").read_text(), "new content v2")
+            self.assertEqual(len(list(package_sources.glob(".backup-router-packages-*"))), 1)
+
+    def test_extract_router_packages_subsequent_run_with_orphaned_backups(self) -> None:
+        import importlib.util
+        import io
+        import tempfile
+        import tarfile
+        spec = importlib.util.spec_from_file_location("pipeline_mod", ROOT / "scripts" / "pipeline.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            package_sources = tmp_path / "package-sources"
+            package_sources.mkdir(parents=True, exist_ok=True)
+
+            # Orphaned backup from previous crashed run
+            orphan_backup = package_sources / ".backup-router-packages-orphaned123"
+            orphan_backup.mkdir(parents=True, exist_ok=True)
+            (orphan_backup / "stale.txt").write_text("orphaned data")
+
+            # Active package_root
+            package_root = package_sources / "router-packages"
+            package_root.mkdir(parents=True, exist_ok=True)
+            (package_root / "old.txt").write_text("old content v1")
+
+            tar_path = tmp_path / "new.tar.gz"
+            with tarfile.open(tar_path, "w:gz") as tar:
+                ti = tarfile.TarInfo(name="router-packages/new.txt")
+                ti.size = 14
+                tar.addfile(ti, io.BytesIO(b"new content v2"))
+
+            with unittest.mock.patch.object(mod, "target_required_sources", return_value=[(Path("src.yaml"), {"name": "router-packages", "revision": "123"})]):
+                with unittest.mock.patch.object(mod, "fetch_source_archive", return_value=tar_path):
+                    with unittest.mock.patch.object(mod, "build_dir", return_value=tmp_path):
+                        res_root, rev = mod.extract_router_packages("x86_64-qemu-uefi-preview")
+
+            # Assert new run generates its own UUID backup and leaves orphaned backup untouched
+            self.assertEqual(res_root, package_root)
+            self.assertTrue((package_root / "new.txt").is_file())
+            self.assertTrue(orphan_backup.is_dir())
+            self.assertTrue((orphan_backup / "stale.txt").is_file())
+
     def test_extract_router_packages_successful_replacement(self) -> None:
         import importlib.util
         import io
