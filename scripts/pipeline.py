@@ -93,10 +93,108 @@ def input_reference(path: Path) -> str:
         return str(path)
 
 
-def source_locks(strict: bool) -> list[tuple[Path, dict[str, str]]]:
+class PackageDependencySpec:
+    """Package dependency specification for source closure resolution.
+
+    Allows declaring explicit source mappings, build-time dependencies,
+    runtime dependencies, and kernel dependencies.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        source: str | None = None,
+        build_deps: tuple[str, ...] = (),
+        runtime_deps: tuple[str, ...] = (),
+        kernel_deps: tuple[str, ...] = (),
+    ) -> None:
+        self.name = name
+        self.source = source
+        self.build_deps = build_deps
+        self.runtime_deps = runtime_deps
+        self.kernel_deps = kernel_deps
+
+    def required_packages(self) -> set[str]:
+        return set(self.build_deps) | set(self.runtime_deps) | set(self.kernel_deps)
+
+    def resolved_source(self) -> str | None:
+        return self.source
+
+
+PACKAGE_REGISTRY: dict[str, PackageDependencySpec] = {
+    "linux": PackageDependencySpec("linux", source="linux"),
+    "systemd": PackageDependencySpec("systemd", source="systemd"),
+    "hostapd": PackageDependencySpec("hostapd", source="hostapd"),
+    "nftables": PackageDependencySpec("nftables", source="nftables"),
+    "unbound": PackageDependencySpec("unbound", source="unbound"),
+    "kea": PackageDependencySpec("kea", source="kea"),
+    "jool": PackageDependencySpec("jool", source="jool"),
+    "router-packages": PackageDependencySpec("router-packages", source="router-packages"),
+    "router": PackageDependencySpec("router", source=None, build_deps=("router-packages",)),
+    "base": PackageDependencySpec("base", source=None),
+    "kernel": PackageDependencySpec("kernel", source=None, kernel_deps=("linux",)),
+    "networking": PackageDependencySpec("networking", source=None),
+    "wireless": PackageDependencySpec("wireless", source=None, build_deps=("hostapd",)),
+}
+
+
+def target_required_sources(device: str) -> set[str]:
+    """Determine the source lock names required for a device target.
+
+    Computes the deterministic source closure starting from
+    devices/<device>/packages.txt and package dependency specs.
+    """
+    composition = firmware_device_directory(device)
+    packages_file = composition / "packages.txt"
+    if not packages_file.is_file():
+        fail(f"missing {packages_file}")
+
+    requested = [
+        line.strip()
+        for line in packages_file.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+
+    candidates = list(requested)
+    recipes_dir = ROOT / "packages"
+    if recipes_dir.is_dir():
+        for recipe in sorted(recipes_dir.glob("*/build")):
+            pkg_name = recipe.parent.name
+            if pkg_name not in candidates:
+                candidates.append(pkg_name)
+
+    visited_packages: set[str] = set()
+    required_sources: set[str] = set()
+    queue = list(candidates)
+
+    while queue:
+        pkg_name = queue.pop(0)
+        if pkg_name in visited_packages:
+            continue
+        visited_packages.add(pkg_name)
+
+        spec = PACKAGE_REGISTRY.get(pkg_name)
+        if spec is None:
+            spec = PackageDependencySpec(pkg_name, source=pkg_name)
+
+        source_name = spec.resolved_source()
+        if source_name is not None:
+            required_sources.add(source_name)
+
+        for dep in sorted(spec.required_packages()):
+            if dep not in visited_packages:
+                queue.append(dep)
+
+    return required_sources
+
+
+def source_locks(strict: bool = False, device: str | None = None) -> list[tuple[Path, dict[str, str]]]:
     locks = []
+    required = target_required_sources(device) if device is not None else None
     for path in sorted((ROOT / "sources").glob("*.yaml")):
         values = scalar_yaml(path)
+        if required is not None and values.get("name") not in required:
+            continue
         for field in ("name", "status", "upstream", "revision", "sha256", "license", "archive"):
             if not values.get(field):
                 fail(f"{path}: missing {field}")
@@ -140,7 +238,7 @@ def verify(device: str, strict: bool = False) -> None:
     for name in preserved:
         if name not in text:
             fail(f"{definition_path}: preserved region {name} is required")
-    locks = source_locks(strict)
+    locks = source_locks(strict, device=device)
     names = {values["name"] for _, values in locks}
     requested = {
         line.strip() for line in (composition / "packages.txt").read_text(encoding="utf-8").splitlines()
@@ -161,7 +259,7 @@ def fetch(device: str) -> None:
     verify(device, strict=True)
     downloads = build_dir(device) / "downloads"
     downloads.mkdir(exist_ok=True)
-    for _, source in source_locks(strict=True):
+    for _, source in source_locks(strict=True, device=device):
         destination = downloads / f"{source['name']}-{source['revision']}.source"
         if not destination.exists():
             print(f"fetch {source['name']}")
@@ -176,7 +274,7 @@ def fetch(device: str) -> None:
 def extract_router_packages(device: str) -> tuple[Path, str]:
     """Extract the locked internal router-packages archive for recipe use."""
     source = next(
-        values for _, values in source_locks(strict=True)
+        values for _, values in source_locks(strict=True, device=device)
         if values["name"] == "router-packages"
     )
     archive = build_dir(device) / "downloads" / f"router-packages-{source['revision']}.source"
@@ -486,7 +584,7 @@ def write_sbom(device: str, fixture: bool, entries: list[dict[str, object]], cre
         "hashes": [{"alg": "SHA-256", "content": entry["sha256"]}],
         "properties": [{"name": "router-firmware:format", "value": entry["format"]}],
     } for entry in entries]
-    for _, source in source_locks(not fixture):
+    for _, source in source_locks(not fixture, device=device):
         components.append({
             "type": "library",
             "name": source["name"],
@@ -534,7 +632,7 @@ def attest(device: str) -> None:
         "format": image_format,
     } for p in artifacts]
     if not fixture:
-        source_locks(strict=True)
+        source_locks(strict=True, device=device)
     stamp = os.environ.get("SOURCE_DATE_EPOCH")
     created = datetime.fromtimestamp(int(stamp), timezone.utc).isoformat().replace("+00:00", "Z") if stamp else datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     sbom = write_sbom(device, fixture, entries, created)
@@ -566,7 +664,7 @@ def attest(device: str) -> None:
             "device": device,
             "releaseKind": "unflashable-fixture" if fixture else "firmware-image",
             "sourceDateEpoch": stamp or None,
-            "sources": [v for _, v in source_locks(not fixture)],
+            "sources": [v for _, v in source_locks(not fixture, device=device)],
             "verifier": {
                 "repository": "kimiusolover/routerctl",
                 "commit": os.environ.get("ROUTERCTL_VERIFIER_COMMIT"),
