@@ -227,3 +227,42 @@ EFI ローダー欠落時の異常系テスト: **passed**
 今回の QEMU UEFI プレビュー環境では、通常起動と EFI ローダー欠落時の異常系テストがともに成功した。
 
 この結果は QEMU 上の検証結果であり、実機の全デバイスでの動作を保証するものではない。`systemd-imds-generator` の終了コード 1 と `libbpf` 不在の警告は、別途評価する。
+
+## 追加検証結果（2026-10-07、de0a192）
+
+### 検証環境とソース
+
+- 検証方式: `arch-binary-bootstrap`
+- 対象: `x86_64-qemu-uefi-preview`
+- 起動方式: UEFI / QEMU TCG
+- 検証時のソースコミット: `de0a192932464fb766707b7dc06e9d6e40dc1c72`
+- `packages.lock.json` SHA-256: `ef0ab7593736e31f53297b462ce90f34860cd82468ce75ae254663e609b73b28`
+- 両テストとも `base_unchanged: true`
+
+### 通常起動テスト
+
+- 結果: `passed`
+- イメージ SHA-256: `688f51eae666bb8e010d3fcdcd3d8347be2d57ac990b5d06e932c8fb9268d33a`
+- 証拠ファイル: `build/x86_64-qemu-uefi-preview/qemu/688f51eae666bb8e010d3fcdcd3d8347be2d57ac990b5d06e932c8fb9268d33a/run-kl3p2b2v/evidence.json`
+- チェック項目: コールドブート時のログインプロンプト、管理者ログイン UID 1000、sudo の誤パスワード拒否、sudo の正しいパスワードによる UID 0、sudoers の妥当性、root パスワードログイン拒否、正常な電源停止。
+
+### EFI ローダー欠落テスト
+
+- 結果: `passed`
+- `negative_loader: true`
+- イメージ SHA-256: `7df0aadc7888f39551d2cbc78f702c50541ffee50b4a8986876278b364df4b98`
+- 証拠ファイル: `build/x86_64-qemu-uefi-preview/qemu/7df0aadc7888f39551d2cbc78f702c50541ffee50b4a8986876278b364df4b98/run-169g8v4q/evidence.json`
+- チェック項目: `missing_loader_does_not_reach_login`
+
+### 起動ログの確認
+
+今回の2テストのログを対象に検索した結果:
+
+- `switch_root`、`failed to mount moving /run`、`forcing unmount of /run` に一致する警告は検出されなかった。
+- `libbpf.so.1` / `libbpf.so.0` がないため cgroup BPF 機能が無効になる旨の警告が残っている。
+- `systemd-imds-generator` が終了コード 1 で終了した記録が残っている。
+- 通常起動ログでは `Login Prompts` および `Multi-User System` の各ターゲットへの到達が記録されている。
+
+### 検証範囲と制限
+
+上記は Arch Linux のバイナリを使用した QEMU 専用ブートストラップの検証結果である。OpenWrt の完全なファームウェア、実機でのネットワーク動作、VLAN、IPv6-PD、DS-Lite の動作を証明するものではない。残存する警告については、それぞれの必要性と影響を別途評価する。
