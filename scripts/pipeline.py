@@ -59,6 +59,212 @@ def yaml_list(path: Path, key: str) -> list[str]:
     return values
 
 
+def parse_partitions_yaml(path: Path) -> dict[str, object]:
+    """Parse partitions.yaml into a structured python dictionary."""
+    result: dict[str, object] = {
+        "status": None,
+        "media": {},
+        "preserve": [],
+        "replaceable": [],
+        "partitions": [],
+    }
+    lines = path.read_text(encoding="utf-8").splitlines()
+    current_section = None
+    current_partition: dict[str, object] | None = None
+    current_nvmem: dict[str, object] | None = None
+
+    for raw in lines:
+        line = raw.rstrip()
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+
+        indent = len(line) - len(line.lstrip(" "))
+
+        if indent == 0:
+            if ":" in stripped and not stripped.startswith("-"):
+                key, val = stripped.split(":", 1)
+                key = key.strip()
+                val = val.strip().strip("'\"")
+                current_section = key
+                current_partition = None
+                current_nvmem = None
+                if val:
+                    result[key] = val
+            continue
+
+        if current_section == "media" and indent >= 2:
+            if ":" in stripped:
+                k, v = stripped.split(":", 1)
+                result["media"][k.strip()] = v.strip().strip("'\"")
+            continue
+
+        if current_section in ("preserve", "replaceable") and indent >= 2:
+            if stripped.startswith("- "):
+                result[current_section].append(stripped[2:].strip().strip("'\""))
+            continue
+
+        if current_section == "partitions":
+            if indent <= 2 and stripped.startswith("- "):
+                current_partition = {}
+                result["partitions"].append(current_partition)
+                current_nvmem = None
+                item = stripped[2:].strip()
+                if ":" in item:
+                    k, v = item.split(":", 1)
+                    val_str = v.strip().strip("'\"") if v.strip() else None
+                    if val_str in ("null", "~", ""):
+                        val_str = None
+                    current_partition[k.strip()] = val_str
+            elif current_partition is not None:
+                if stripped.startswith("nvmem:"):
+                    current_nvmem = None
+                    current_partition["nvmem"] = []
+                elif current_partition.get("nvmem") is not None and indent >= 6:
+                    if stripped.startswith("- "):
+                        current_nvmem = {}
+                        current_partition["nvmem"].append(current_nvmem)
+                        item = stripped[2:].strip()
+                        if ":" in item:
+                            k, v = item.split(":", 1)
+                            val_str = v.strip().strip("'\"") if v.strip() else None
+                            if val_str in ("null", "~", ""):
+                                val_str = None
+                            current_nvmem[k.strip()] = val_str
+                    elif current_nvmem is not None and ":" in stripped:
+                        k, v = stripped.split(":", 1)
+                        val_str = v.strip().strip("'\"") if v.strip() else None
+                        if val_str in ("null", "~", ""):
+                            val_str = None
+                        current_nvmem[k.strip()] = val_str
+                elif ":" in stripped:
+                    k, v = stripped.split(":", 1)
+                    val_str = v.strip().strip("'\"") if v.strip() else None
+                    if val_str in ("null", "~", ""):
+                        val_str = None
+                    current_partition[k.strip()] = val_str
+
+    return result
+
+
+def parse_num(val: object) -> int:
+    if val is None:
+        fail("missing integer value")
+    if isinstance(val, int):
+        return val
+    s = str(val).strip().strip("'\"")
+    if s.startswith("0x") or s.startswith("0X"):
+        return int(s, 16)
+    return int(s)
+
+
+def validate_storage_contract(partitions_path: Path, definition_path: Path) -> dict[str, object]:
+    parsed = parse_partitions_yaml(partitions_path)
+
+    status = parsed.get("status")
+    if status not in {"discovery", "unverified", "verified"}:
+        fail(f"{partitions_path}: invalid status")
+
+    partitions = parsed.get("partitions", [])
+    top_preserve = set(parsed.get("preserve", []))
+    top_replaceable = set(parsed.get("replaceable", []))
+
+    if partitions:
+        names = [p.get("name") for p in partitions if p.get("name") is not None]
+        if len(names) != len(partitions):
+            fail(f"{partitions_path}: partition missing name")
+        if len(names) != len(set(names)):
+            fail(f"{partitions_path}: partition names must be unique")
+
+        p_preserve = set()
+        p_replaceable = set()
+        spans = []
+
+        media = parsed.get("media", {})
+        total_bytes = None
+        if isinstance(media, dict) and "total_bytes" in media:
+            total_bytes = parse_num(media["total_bytes"])
+
+        for p in partitions:
+            p_name = str(p.get("name"))
+            preservation = p.get("preservation")
+            if preservation not in {"preserve", "replaceable"}:
+                fail(f"{partitions_path}: partition {p_name} has invalid preservation status: {preservation}")
+
+            if preservation == "preserve":
+                p_preserve.add(p_name)
+            else:
+                p_replaceable.add(p_name)
+
+            try:
+                offset = parse_num(p.get("offset"))
+                size = parse_num(p.get("size"))
+            except (ValueError, TypeError):
+                fail(f"{partitions_path}: partition {p_name} has invalid offset or size")
+
+            if offset < 0 or size <= 0:
+                fail(f"{partitions_path}: partition {p_name} has invalid offset or size")
+
+            end = offset + size
+            if total_bytes is not None and end > total_bytes:
+                fail(f"{partitions_path}: partition {p_name} bounds ({hex(offset)}..{hex(end)}) exceed media size ({hex(total_bytes)})")
+
+            spans.append((offset, end, p_name))
+
+        # Overlap check
+        spans.sort(key=lambda x: x[0])
+        for i in range(len(spans) - 1):
+            curr_off, curr_end, curr_name = spans[i]
+            next_off, next_end, next_name = spans[i + 1]
+            if curr_end > next_off:
+                fail(f"{partitions_path}: partitions overlap: {curr_name} ends at {hex(curr_end)} but {next_name} starts at {hex(next_off)}")
+
+        # Check top-level consistency if defined
+        if top_preserve and top_preserve != p_preserve:
+            fail(f"{partitions_path}: top-level preserve list does not match partition classifications")
+        if top_replaceable and top_replaceable != p_replaceable:
+            fail(f"{partitions_path}: top-level replaceable list does not match partition classifications")
+    else:
+        def_preserve = yaml_list(definition_path, "preserve")
+        if not top_preserve and not def_preserve:
+            fail(f"{partitions_path}: missing preservation policy")
+
+    return parsed
+
+
+def validate_image_target_region(device: str, target: str | tuple[int, int]) -> None:
+    _, definition_path, partitions_path = device_paths(device)
+    parsed = validate_storage_contract(partitions_path, definition_path)
+    partitions = parsed.get("partitions", [])
+    top_preserve = set(parsed.get("preserve", [])) or set(yaml_list(partitions_path, "preserve")) or set(yaml_list(definition_path, "preserve"))
+
+    if isinstance(target, str):
+        target_name = target
+        preserved_names = {p["name"] for p in partitions if p.get("preservation") == "preserve"} if partitions else top_preserve
+        if target_name in preserved_names:
+            fail(f"refusing to overwrite preserved partition: {target_name}")
+    elif isinstance(target, tuple):
+        target_offset, target_end = target
+        if partitions:
+            for p in partitions:
+                if p.get("preservation") == "preserve":
+                    p_off = parse_num(p.get("offset"))
+                    p_end = p_off + parse_num(p.get("size"))
+                    if max(target_offset, p_off) < min(target_end, p_end):
+                        fail(f"refusing to overwrite preserved region {p.get('name')} ({hex(p_off)}..{hex(p_end)})")
+
+
+def get_preserved_partitions(device: str) -> list[str]:
+    _, definition_path, partitions_path = device_paths(device)
+    parsed = validate_storage_contract(partitions_path, definition_path)
+    partitions = parsed.get("partitions", [])
+    if partitions:
+        return [p["name"] for p in partitions if p.get("preservation") == "preserve"]
+    if parsed.get("preserve"):
+        return list(parsed["preserve"])
+    return yaml_list(partitions_path, "preserve") or yaml_list(definition_path, "preserve")
+
+
 def fail(message: str) -> None:
     raise RuntimeError(message)
 
@@ -226,18 +432,13 @@ def verify(device: str, strict: bool = False) -> None:
         if not (composition / name).is_file():
             fail(f"missing {composition / name}")
     definition = scalar_yaml(definition_path)
-    partitions = scalar_yaml(partitions_path)
     if definition.get("id") != device:
         fail(f"{definition_path}: id must equal {device}")
     if definition.get("status") not in {"discovery", "verified", "supported"}:
         fail(f"{definition_path}: invalid status")
-    if partitions.get("status") not in {"unverified", "verified"}:
-        fail(f"{partitions_path}: invalid status")
-    text = definition_path.read_text(encoding="utf-8")
-    preserved = ("host-block-devices", "host-uefi-variables") if definition.get("deployment") == "qemu-ovmf-only" else ("u-boot", "factory", "art")
-    for name in preserved:
-        if name not in text:
-            fail(f"{definition_path}: preserved region {name} is required")
+
+    validate_storage_contract(partitions_path, definition_path)
+
     locks = source_locks(strict, device=device)
     names = {values["name"] for _, values in locks}
     requested = {
@@ -649,7 +850,7 @@ def attest(device: str) -> None:
         "created": created,
         "release_kind": "unflashable-fixture" if fixture else "firmware-image",
         "flashable": False if fixture else True,
-        "preserved_partitions": yaml_list(device_paths(device)[1], "preserve"),
+        "preserved_partitions": get_preserved_partitions(device),
     }
     (ROOT / "dist" / f"{device}.manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     (ROOT / "dist" / "SHA256SUMS").write_text("".join(f"{entry['sha256']}  {entry['name']}\n" for entry in entries), encoding="utf-8")
