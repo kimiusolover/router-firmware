@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
-import subprocess
 import json
+import os
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
+PLATFORM_ROOT = Path(os.environ.get("ROUTER_PLATFORM_ROOT", str(ROOT.parent / "router-platform"))).resolve()
+
+import sys
+sys.path.insert(0, str(ROOT / "scripts"))
+import pipeline
 
 
 class PipelineTests(unittest.TestCase):
@@ -43,9 +49,6 @@ class PipelineTests(unittest.TestCase):
         self.assertNotIn('"user,model=virtio-net-pci"', runner)
 
     def test_ax23v1_source_closure(self) -> None:
-        import sys
-        sys.path.insert(0, str(ROOT / "scripts"))
-        import pipeline
         closure = pipeline.target_required_sources("ax23v-v1")
         expected = {
             "linux",
@@ -60,7 +63,6 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(closure, expected)
 
     def test_unrelated_pending_source_does_not_block_fetch(self) -> None:
-        # Create a dummy source in sources/ that is pending-verification and unrelated.
         dummy_yaml = ROOT / "sources" / "dummy_unrelated.yaml"
         dummy_yaml.write_text(
             "name: dummy-unrelated\n"
@@ -74,7 +76,6 @@ class PipelineTests(unittest.TestCase):
         )
         try:
             result = self.run_pipeline("fetch", "--device", "ax23v-v1")
-            # Should fail on a required pending source (e.g. hostapd.yaml), NOT dummy_unrelated.yaml.
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("source must be status: locked", result.stderr)
             self.assertNotIn("dummy_unrelated.yaml", result.stderr)
@@ -87,7 +88,6 @@ class PipelineTests(unittest.TestCase):
         self.assertIn("source must be status: locked", result.stderr)
 
     def test_invalid_sha256_in_required_locked_source_fails_fetch(self) -> None:
-        # Temporarily set all required sources to locked (dummy valid specs) to isolate sha256 check
         orig_sources = {}
         required_sources = ["hostapd", "jool", "kea", "kernel", "nftables", "systemd", "unbound"]
         for src_name in required_sources:
@@ -104,7 +104,6 @@ class PipelineTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-        # Temporarily change router-packages.yaml sha256 to invalid hex length
         rp_yaml = ROOT / "sources" / "router-packages.yaml"
         orig_sources[rp_yaml] = rp_yaml.read_text(encoding="utf-8")
         invalid = orig_sources[rp_yaml].replace(
@@ -165,3 +164,237 @@ class PipelineTests(unittest.TestCase):
             checksums.unlink(missing_ok=True)
             provenance.unlink(missing_ok=True)
             sbom.unlink(missing_ok=True)
+
+    # Generic storage contract tests (Tests A-H)
+
+    def get_canonical_ax23v1_contract_paths(self, tmpdir: str) -> tuple[Path, Path]:
+        dir_path = Path(tmpdir)
+        def_path = dir_path / "device.yaml"
+        part_path = dir_path / "partitions.yaml"
+
+        def_path.write_text(
+            "schema: router-platform.device/v1\n"
+            "id: ax23v-v1\n"
+            "status: discovery\n"
+            "preserve:\n"
+            "  - u-boot\n"
+            "  - config\n"
+            "  - tplink\n"
+            "  - radio\n",
+            encoding="utf-8",
+        )
+        part_path.write_text(
+            "schema: router-platform.partitions/v1\n"
+            "status: discovery\n"
+            "media:\n"
+            "  type: spi-nor\n"
+            "  total_bytes: 16777216\n"
+            "preserve:\n"
+            "  - u-boot\n"
+            "  - config\n"
+            "  - tplink\n"
+            "  - radio\n"
+            "replaceable:\n"
+            "  - firmware\n"
+            "partitions:\n"
+            "  - name: u-boot\n"
+            "    offset: 0x000000\n"
+            "    size: 0x040000\n"
+            "    preservation: preserve\n"
+            "  - name: firmware\n"
+            "    offset: 0x040000\n"
+            "    size: 0xf60000\n"
+            "    preservation: replaceable\n"
+            "  - name: config\n"
+            "    offset: 0xfa0000\n"
+            "    size: 0x010000\n"
+            "    preservation: preserve\n"
+            "  - name: tplink\n"
+            "    offset: 0xfb0000\n"
+            "    size: 0x040000\n"
+            "    preservation: preserve\n"
+            "  - name: radio\n"
+            "    offset: 0xff0000\n"
+            "    size: 0x010000\n"
+            "    preservation: preserve\n",
+            encoding="utf-8",
+        )
+        return def_path, part_path
+
+    def test_a_ax23v1_canonical_preservation_contract_passes(self) -> None:
+        """Test A — AX23 v1 canonical preservation passes validation."""
+        _, def_path, part_path = pipeline.device_paths("ax23v-v1")
+        if not pipeline.parse_partitions_yaml(part_path).get("partitions"):
+            with tempfile.TemporaryDirectory() as tmpdir:
+                def_path, part_path = self.get_canonical_ax23v1_contract_paths(tmpdir)
+                contract = pipeline.validate_storage_contract(part_path, def_path)
+                self.assertEqual(contract["status"], "discovery")
+                p_names = [p["name"] for p in contract["partitions"] if p.get("preservation") == "preserve"]
+                self.assertEqual(p_names, ["u-boot", "config", "tplink", "radio"])
+        else:
+            contract = pipeline.validate_storage_contract(part_path, def_path)
+            self.assertEqual(contract["status"], "discovery")
+            preserved = pipeline.get_preserved_partitions("ax23v-v1")
+            self.assertEqual(preserved, ["u-boot", "config", "tplink", "radio"])
+
+    def test_b_factory_art_uboot_env_absence_passes(self) -> None:
+        """Test B — Absence of factory/art/u-boot-env in contract passes."""
+        _, def_path, part_path = pipeline.device_paths("ax23v-v1")
+        if not pipeline.parse_partitions_yaml(part_path).get("partitions"):
+            with tempfile.TemporaryDirectory() as tmpdir:
+                def_path, part_path = self.get_canonical_ax23v1_contract_paths(tmpdir)
+                contract = pipeline.validate_storage_contract(part_path, def_path)
+                p_names = [p["name"] for p in contract["partitions"] if p.get("preservation") == "preserve"]
+                self.assertNotIn("factory", p_names)
+                self.assertNotIn("art", p_names)
+                self.assertNotIn("u-boot-env", p_names)
+        else:
+            preserved = pipeline.get_preserved_partitions("ax23v-v1")
+            self.assertNotIn("factory", preserved)
+            self.assertNotIn("art", preserved)
+            self.assertNotIn("u-boot-env", preserved)
+
+    def test_c_custom_fake_board_contract_passes(self) -> None:
+        """Test C — Generic storage contract validation accepts custom fake board layout."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            dir_path = Path(tmpdir)
+            def_path = dir_path / "device.yaml"
+            part_path = dir_path / "partitions.yaml"
+
+            def_path.write_text("id: fake-board\nstatus: discovery\npreserve:\n  - boot\n  - env\n  - calibration\n", encoding="utf-8")
+            part_path.write_text(
+                "status: discovery\n"
+                "media:\n"
+                "  total_bytes: 16777216\n"
+                "preserve:\n"
+                "  - boot\n"
+                "  - env\n"
+                "  - calibration\n"
+                "replaceable:\n"
+                "  - firmware\n"
+                "partitions:\n"
+                "  - name: boot\n"
+                "    offset: 0x000000\n"
+                "    size: 0x040000\n"
+                "    preservation: preserve\n"
+                "  - name: env\n"
+                "    offset: 0x040000\n"
+                "    size: 0x010000\n"
+                "    preservation: preserve\n"
+                "  - name: firmware\n"
+                "    offset: 0x050000\n"
+                "    size: 0xf00000\n"
+                "    preservation: replaceable\n"
+                "  - name: calibration\n"
+                "    offset: 0xf50000\n"
+                "    size: 0x010000\n"
+                "    preservation: preserve\n",
+                encoding="utf-8",
+            )
+            parsed = pipeline.validate_storage_contract(part_path, def_path)
+            self.assertEqual(parsed["status"], "discovery")
+            p_names = [p["name"] for p in parsed["partitions"] if p.get("preservation") == "preserve"]
+            self.assertEqual(p_names, ["boot", "env", "calibration"])
+
+    def test_d_missing_or_null_preservation_classification_rejected(self) -> None:
+        """Test D — Rejects partition missing or null preservation classification."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            dir_path = Path(tmpdir)
+            def_path = dir_path / "device.yaml"
+            part_path = dir_path / "partitions.yaml"
+
+            def_path.write_text("id: test-board\nstatus: discovery\n", encoding="utf-8")
+            part_path.write_text(
+                "status: discovery\n"
+                "partitions:\n"
+                "  - name: boot\n"
+                "    offset: 0x000000\n"
+                "    size: 0x040000\n"
+                "    preservation: null\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(RuntimeError) as ctx:
+                pipeline.validate_storage_contract(part_path, def_path)
+            self.assertIn("invalid preservation status", str(ctx.exception))
+
+    def test_e_unknown_preservation_classification_rejected(self) -> None:
+        """Test E — Rejects unknown preservation classification like maybe."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            dir_path = Path(tmpdir)
+            def_path = dir_path / "device.yaml"
+            part_path = dir_path / "partitions.yaml"
+
+            def_path.write_text("id: test-board\nstatus: discovery\n", encoding="utf-8")
+            part_path.write_text(
+                "status: discovery\n"
+                "partitions:\n"
+                "  - name: boot\n"
+                "    offset: 0x000000\n"
+                "    size: 0x040000\n"
+                "    preservation: maybe\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(RuntimeError) as ctx:
+                pipeline.validate_storage_contract(part_path, def_path)
+            self.assertIn("invalid preservation status", str(ctx.exception))
+
+    def test_f_overlapping_partitions_rejected(self) -> None:
+        """Test F — Rejects overlapping partitions."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            dir_path = Path(tmpdir)
+            def_path = dir_path / "device.yaml"
+            part_path = dir_path / "partitions.yaml"
+
+            def_path.write_text("id: test-board\nstatus: discovery\n", encoding="utf-8")
+            part_path.write_text(
+                "status: discovery\n"
+                "partitions:\n"
+                "  - name: p1\n"
+                "    offset: 0x000000\n"
+                "    size: 0x040000\n"
+                "    preservation: preserve\n"
+                "  - name: p2\n"
+                "    offset: 0x020000\n"
+                "    size: 0x040000\n"
+                "    preservation: replaceable\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(RuntimeError) as ctx:
+                pipeline.validate_storage_contract(part_path, def_path)
+            self.assertIn("partitions overlap", str(ctx.exception))
+
+    def test_g_exceeding_media_bounds_rejected(self) -> None:
+        """Test G — Rejects partition exceeding media bounds."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            dir_path = Path(tmpdir)
+            def_path = dir_path / "device.yaml"
+            part_path = dir_path / "partitions.yaml"
+
+            def_path.write_text("id: test-board\nstatus: discovery\n", encoding="utf-8")
+            part_path.write_text(
+                "status: discovery\n"
+                "media:\n"
+                "  total_bytes: 0x10000\n"
+                "partitions:\n"
+                "  - name: p1\n"
+                "    offset: 0x000000\n"
+                "    size: 0x20000\n"
+                "    preservation: preserve\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(RuntimeError) as ctx:
+                pipeline.validate_storage_contract(part_path, def_path)
+            self.assertIn("exceed media size", str(ctx.exception))
+
+    def test_h_overwrite_preserved_region_rejected(self) -> None:
+        """Test H — Rejects operations attempting to overwrite preserved partitions/regions."""
+        with self.assertRaises(RuntimeError) as ctx1:
+            pipeline.validate_image_target_region("ax23v-v1", "u-boot")
+        self.assertIn("refusing to overwrite preserved partition", str(ctx1.exception))
+
+        with self.assertRaises(RuntimeError) as ctx2:
+            pipeline.validate_image_target_region("ax23v-v1", (0x000000, 0x020000))
+        self.assertIn("refusing to overwrite preserved region", str(ctx2.exception))
+
+        # Target replaceable partition should pass without exception
+        pipeline.validate_image_target_region("ax23v-v1", "firmware")
