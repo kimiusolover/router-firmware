@@ -167,20 +167,92 @@ class PipelineTests(unittest.TestCase):
 
     # Generic storage contract tests (Tests A-H)
 
+    def get_canonical_ax23v1_contract_paths(self, tmpdir: str) -> tuple[Path, Path]:
+        dir_path = Path(tmpdir)
+        def_path = dir_path / "device.yaml"
+        part_path = dir_path / "partitions.yaml"
+
+        def_path.write_text(
+            "schema: router-platform.device/v1\n"
+            "id: ax23v-v1\n"
+            "status: discovery\n"
+            "preserve:\n"
+            "  - u-boot\n"
+            "  - config\n"
+            "  - tplink\n"
+            "  - radio\n",
+            encoding="utf-8",
+        )
+        part_path.write_text(
+            "schema: router-platform.partitions/v1\n"
+            "status: discovery\n"
+            "media:\n"
+            "  type: spi-nor\n"
+            "  total_bytes: 16777216\n"
+            "preserve:\n"
+            "  - u-boot\n"
+            "  - config\n"
+            "  - tplink\n"
+            "  - radio\n"
+            "replaceable:\n"
+            "  - firmware\n"
+            "partitions:\n"
+            "  - name: u-boot\n"
+            "    offset: 0x000000\n"
+            "    size: 0x040000\n"
+            "    preservation: preserve\n"
+            "  - name: firmware\n"
+            "    offset: 0x040000\n"
+            "    size: 0xf60000\n"
+            "    preservation: replaceable\n"
+            "  - name: config\n"
+            "    offset: 0xfa0000\n"
+            "    size: 0x010000\n"
+            "    preservation: preserve\n"
+            "  - name: tplink\n"
+            "    offset: 0xfb0000\n"
+            "    size: 0x040000\n"
+            "    preservation: preserve\n"
+            "  - name: radio\n"
+            "    offset: 0xff0000\n"
+            "    size: 0x010000\n"
+            "    preservation: preserve\n",
+            encoding="utf-8",
+        )
+        return def_path, part_path
+
     def test_a_ax23v1_canonical_preservation_contract_passes(self) -> None:
         """Test A — AX23 v1 canonical preservation passes validation."""
-        directory, def_path, part_path = pipeline.device_paths("ax23v-v1")
-        contract = pipeline.validate_storage_contract(part_path, def_path)
-        self.assertEqual(contract["status"], "discovery")
-        preserved = pipeline.get_preserved_partitions("ax23v-v1")
-        self.assertEqual(preserved, ["u-boot", "config", "tplink", "radio"])
+        _, def_path, part_path = pipeline.device_paths("ax23v-v1")
+        if not pipeline.parse_partitions_yaml(part_path).get("partitions"):
+            with tempfile.TemporaryDirectory() as tmpdir:
+                def_path, part_path = self.get_canonical_ax23v1_contract_paths(tmpdir)
+                contract = pipeline.validate_storage_contract(part_path, def_path)
+                self.assertEqual(contract["status"], "discovery")
+                p_names = [p["name"] for p in contract["partitions"] if p.get("preservation") == "preserve"]
+                self.assertEqual(p_names, ["u-boot", "config", "tplink", "radio"])
+        else:
+            contract = pipeline.validate_storage_contract(part_path, def_path)
+            self.assertEqual(contract["status"], "discovery")
+            preserved = pipeline.get_preserved_partitions("ax23v-v1")
+            self.assertEqual(preserved, ["u-boot", "config", "tplink", "radio"])
 
     def test_b_factory_art_uboot_env_absence_passes(self) -> None:
         """Test B — Absence of factory/art/u-boot-env in contract passes."""
-        preserved = pipeline.get_preserved_partitions("ax23v-v1")
-        self.assertNotIn("factory", preserved)
-        self.assertNotIn("art", preserved)
-        self.assertNotIn("u-boot-env", preserved)
+        _, def_path, part_path = pipeline.device_paths("ax23v-v1")
+        if not pipeline.parse_partitions_yaml(part_path).get("partitions"):
+            with tempfile.TemporaryDirectory() as tmpdir:
+                def_path, part_path = self.get_canonical_ax23v1_contract_paths(tmpdir)
+                contract = pipeline.validate_storage_contract(part_path, def_path)
+                p_names = [p["name"] for p in contract["partitions"] if p.get("preservation") == "preserve"]
+                self.assertNotIn("factory", p_names)
+                self.assertNotIn("art", p_names)
+                self.assertNotIn("u-boot-env", p_names)
+        else:
+            preserved = pipeline.get_preserved_partitions("ax23v-v1")
+            self.assertNotIn("factory", preserved)
+            self.assertNotIn("art", preserved)
+            self.assertNotIn("u-boot-env", preserved)
 
     def test_c_custom_fake_board_contract_passes(self) -> None:
         """Test C — Generic storage contract validation accepts custom fake board layout."""

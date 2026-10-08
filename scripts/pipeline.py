@@ -252,6 +252,8 @@ def validate_image_target_region(device: str, target: str | tuple[int, int]) -> 
                     p_end = p_off + parse_num(p.get("size"))
                     if max(target_offset, p_off) < min(target_end, p_end):
                         fail(f"refusing to overwrite preserved region {p.get('name')} ({hex(p_off)}..{hex(p_end)})")
+        elif top_preserve:
+            fail(f"refusing to overwrite preserved region ({hex(target_offset)}..{hex(target_end)})")
 
 
 def get_preserved_partitions(device: str) -> list[str]:
