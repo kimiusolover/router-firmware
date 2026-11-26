@@ -28,7 +28,7 @@ jobs:
           ref: c57256536a845511002423c0601f845c1724343d
           path: routerctl
           fetch-depth: 1
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@v7.1.0
         with:
           go-version-file: routerctl/go.mod
       - name: Fetch pull request commits without checking out PR code
